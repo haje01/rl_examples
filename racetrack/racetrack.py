@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 from collections import defaultdict
@@ -7,18 +8,18 @@ import numpy as np
 from racetrack_env import RacetrackEnv, Map
 
 
-N_EPISODE = 10000
-MAX_STEP = 12
+N_EPISODE = 200000
+MAX_STEP = 70
 EPSILON = 0.1
 SAVE_FILE = 'racetrack-egreedy.sav'
 
 
-with open('racetrack_simple_map.txt', 'r') as f:
+with open('racetrack_map_4.txt', 'r') as f:
     amap = Map(f.read())
 
 vel_info = (
-    0, 2,  # vx min / max
-    0, 2   # vy min / max
+    0, 3,  # vx min / max
+    -3, 3   # vy min / max
 )
 
 env = RacetrackEnv(amap, vel_info, MAX_STEP)
@@ -45,7 +46,7 @@ def make_epsilon_greedy_policy(env, Q, epsilon, nA):
         A = np.ones(nA, dtype=float) * epsilon / nA
         best_action = np.argmax(Q[observation])
         A[best_action] += (1.0 - epsilon)
-        return env.regulate_probs(observation, A)
+        return A
     return policy_fn
 
 
@@ -64,11 +65,7 @@ def mc_control_epsilon_greedy(env, num_episodes, discount_factor=1.0,
     Returns:
         A tuple (Q, policy).
         Q is a dictionary mapping state -> action values.
-        policy is a function taht takes an observation as an argument and
-            returns
-        action probabilities
-    """
-
+        policy is a function taht takes an observation as an argument and returns action probabilities """
     # Keeps track of sum and count of returns for each state
     # to calculate an average. We could use an array to save all
     # returns (like in the book) but that's memory inefficient.
@@ -122,9 +119,34 @@ def mc_control_epsilon_greedy(env, num_episodes, discount_factor=1.0,
     return Q, policy
 
 
-Q, policy = mc_control_epsilon_greedy(env, num_episodes=N_EPISODE,
-                                      epsilon=EPSILON)
+def create_greedy_policy(Q):
+    """
+    Creates a greedy policy based on Q values.
+
+    Args:
+        Q: A dictionary that maps from state -> action values
+
+    Returns:
+        A function that takes an observation as input and returns a vector
+        of action probabilities.
+    """
+
+    def policy_fn(state):
+        A = np.zeros_like(Q[state], dtype=float)
+        best_action = np.argmax(Q[state])
+        A[best_action] = 1.0
+        return A
+    return policy_fn
+
+
+if os.path.isfile(SAVE_FILE):
+    Q, policy = mc_control_epsilon_greedy(env, num_episodes=N_EPISODE,
+                                          epsilon=EPSILON)
+else:
+    Q, _ = mc_control_epsilon_greedy(env, num_episodes=N_EPISODE, epsilon=EPSILON)
+    env.save(Q, SAVE_FILE)
+    policy = create_greedy_policy(Q)
 
 print('\nTest Score: {}'.format(env.score(policy)))
 time.sleep(2)
-env.play(policy)
+env.play(policy, 1)

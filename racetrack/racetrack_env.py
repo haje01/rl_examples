@@ -1,6 +1,5 @@
 # -*- coding: utf8 -*-
 import os
-import sys
 import time
 from collections import defaultdict
 
@@ -12,9 +11,9 @@ from gym.utils import seeding
 
 
 N_PLAYRUN = 1000
-REWARD_DEFAULT = 1
-REWARD_SUCCESS = 100
-REWARD_OUT = 0
+REWARD_DEFAULT = 0
+REWARD_SUCCESS = 10
+REWARD_OUT = -1
 
 
 class Map(object):
@@ -44,24 +43,24 @@ class Map(object):
         self.car_t = 'O'
         self.loads(data)
 
+    def store_attrs(self, height, line):
+        y = height
+        x = 1
+        for c in line:
+            if c == self.road_t:
+                self.road_pts.append((x, y))
+            elif c == self.start_t:
+                self.start_pts.append((x, y))
+                # self.road_pts.append((x, y))
+            elif c == self.finish_t:
+                self.finish_pts.append((x, y))
+                # self.road_pts.append((x, y))
+            x += 1
+
     def loads(self, data):
         width = 0
         height = 0
         rdata = []
-
-        def store_attrs(height, line):
-            y = height
-            x = 1
-            for c in line:
-                if c == self.road_t:
-                    self.road_pts.append((x, y))
-                elif c == self.start_t:
-                    self.start_pts.append((x, y))
-                    self.road_pts.append((x, y))
-                elif c == self.finish_t:
-                    self.finish_pts.append((x, y))
-                    self.road_pts.append((x, y))
-                x += 1
 
         # analyze map data & make track(road) data
         for line in data.splitlines():
@@ -70,7 +69,7 @@ class Map(object):
                 continue
             width = max(width, len(line))
             height += 1
-            store_attrs(height, line)
+            self.store_attrs(height, line)
         self.width, self.height = width, height
 
         def h_marginate(line):
@@ -155,12 +154,14 @@ ssssssss
 
 log_level = 1
 
+
 def debug(msg):
-    if log_level >2:
+    if log_level > 2:
         print(msg)
 
+
 def info(msg):
-    if log_level >1:
+    if log_level > 1:
         print(msg)
 
 
@@ -180,10 +181,10 @@ class RacetrackEnv(gym.Env):
         self.vx_min, self.vx_max, self.vy_min, self.vy_max = vel_info
         self.max_step = max_step
 
-        # 동작
-        #    속도변화 없음(0)
-        #    X속도 +1, -1 (1, 2)
-        #    Y속도 +1, -1 (3, 4)
+        # Actions
+        #    No velocity (0)
+        #    X velocity +1, -1 (1, 2)
+        #    Y velocity +1, -1 (3, 4)
         self.action_space = spaces.Discrete(5)
 
         self.observation_space = spaces.Tuple((
@@ -203,7 +204,7 @@ class RacetrackEnv(gym.Env):
         return self.vy_max - self.vy_min + 1
 
     def total_states(self):
-        return self.amap.width * self.amap.height * self.count_vx() * self.count_vy()
+        return 4
 
     def regulate_probs(self, observation, A):
         _, _, vx, vy = observation
@@ -279,8 +280,7 @@ class RacetrackEnv(gym.Env):
         elif (self.px, self.py) not in self.amap.road_pts:
             debug("  out of track with [{}]. restart!".format(self._get_obs()))
             if self.n_action != self.max_step:
-                #self.race_start()
-                done=True
+                done = True
                 reward = REWARD_OUT
 
         if self.n_action == self.max_step:
@@ -295,8 +295,6 @@ class RacetrackEnv(gym.Env):
         self.px, self.py = self.get_start()
         self.ppx = self.px
         self.vx = self.vy = 0
-        #pos, self.vx, self.vy = self.get_exploring_start()
-        #self.px, self.py = pos
 
     def _reset(self):
         self.race_start()
@@ -326,8 +324,9 @@ class RacetrackEnv(gym.Env):
                     elif render_type == 2:
                         clear_output(True)
 
-                    print("turn {}/{}, state {}, action, {}, reward {}, done {}".\
-                          format(step, self.max_step, state, action, reward, done))
+                    print("turn {}/{}, state {}, action, {}, reward {}, done "
+                          "{}".format(step, self.max_step, state, action,
+                                      reward, done))
                     self._draw(state)
                     if done and reward == REWARD_SUCCESS:
                         print("Success!")
@@ -342,21 +341,18 @@ class RacetrackEnv(gym.Env):
         x, y, vx, vy = state
         print(self.amap.make_draw_data(x, y))
 
-
     def save(self, Q, filenm):
         with open(filenm, 'w') as f:
             for k, v in Q.items():
                 v = np.array_str(v, max_line_width=1000)
                 f.write('{}\t{}\n'.format(k, v))
 
-
-    def load(self, filenm, policy_fn):
+    def load(self, filenm):
         Q = defaultdict(lambda: np.zeros(self.action_space.n))
-        policy = policy_fn(Q)
         with open(filenm, 'r') as f:
             for line in f:
                 state, probs = line.split('\t')
                 state = eval(state)
                 probs = np.fromstring(probs[1:-1], sep=' ')
                 Q[state] = np.array(probs)
-        return Q, policy
+        return Q
