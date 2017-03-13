@@ -13,7 +13,9 @@ from gym.utils import seeding
 N_PLAYRUN = 1000
 REWARD_DEFAULT = 0
 REWARD_SUCCESS = 10
-REWARD_OUT = -1
+REWARD_OUT = -10
+
+LOG_LEVEL = 1
 
 
 class Map(object):
@@ -51,10 +53,8 @@ class Map(object):
                 self.road_pts.append((x, y))
             elif c == self.start_t:
                 self.start_pts.append((x, y))
-                # self.road_pts.append((x, y))
             elif c == self.finish_t:
                 self.finish_pts.append((x, y))
-                # self.road_pts.append((x, y))
             x += 1
 
     def loads(self, data):
@@ -147,21 +147,18 @@ ssssssss
                            (6, 11), (7, 11), (8, 11)]
     assert m.finish_pts == [(14, 1), (14, 2), (14, 3), (14, 4), (14, 5)]
     assert m.make_draw_data(4, 11).splitlines()[-3] == '##sssOssss########'
-    assert m.in_road(1, 11)
-    assert m.in_road(14, 2)
+    assert m.in_road(1, 10)
+    assert m.in_road(13, 2)
     assert not m.in_road(1, 1)
 
 
-log_level = 1
-
-
 def debug(msg):
-    if log_level > 2:
+    if LOG_LEVEL > 2:
         print(msg)
 
 
 def info(msg):
-    if log_level > 1:
+    if LOG_LEVEL > 1:
         print(msg)
 
 
@@ -196,6 +193,12 @@ class RacetrackEnv(gym.Env):
 
         # Start the first game
         self._reset()
+
+    @property
+    def num_state_space(self):
+        n_vx = self.vx_max - self.vx_min + 1
+        n_vy = self.vy_max - self.vy_min + 1
+        return len(self.amap.road_pts) * n_vx * n_vy
 
     def count_vx(self):
         return self.vx_max - self.vx_min + 1
@@ -259,6 +262,7 @@ class RacetrackEnv(gym.Env):
         elif action == 4:
             self.vy -= 1
 
+        prev_px, prev_py = self.px, self.py
         # print(self.vx, self.vy)
         self.vx = max(min(self.vx, self.vx_max), self.vx_min)
         self.vy = max(min(self.vy, self.vy_max), self.vy_min)
@@ -270,7 +274,6 @@ class RacetrackEnv(gym.Env):
 
         self.n_action += 1
         reward = REWARD_DEFAULT
-        self.ppx = self.px
         done = False
 
         if (self.px, self.py) in self.amap.finish_pts:
@@ -282,6 +285,8 @@ class RacetrackEnv(gym.Env):
             if self.n_action != self.max_step:
                 done = True
                 reward = REWARD_OUT
+        elif self.px == prev_px and self.py == prev_py:
+            reward = -1
 
         if self.n_action == self.max_step:
             debug("  Out of turn")
@@ -293,7 +298,6 @@ class RacetrackEnv(gym.Env):
 
     def race_start(self):
         self.px, self.py = self.get_start()
-        self.ppx = self.px
         self.vx = self.vy = 0
 
     def _reset(self):
@@ -327,7 +331,8 @@ class RacetrackEnv(gym.Env):
                     print("turn {}/{}, state {}, action, {}, reward {}, done "
                           "{}".format(step, self.max_step, state, action,
                                       reward, done))
-                    self._draw(state)
+                    if not done or reward == REWARD_SUCCESS:
+                        self._draw(state)
                     if done and reward == REWARD_SUCCESS:
                         print("Success!")
                         time.sleep(1)

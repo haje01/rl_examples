@@ -1,0 +1,11 @@
+__pycache__
+.ipynb_checkpoints
+.cache
+*.png
+*.sav
+*.meta
+*.swp
+*.pyc
+*.tf
+.ropeproject
+checkpoint
