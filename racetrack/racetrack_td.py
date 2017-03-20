@@ -32,7 +32,7 @@ MAP_NAME = 'map5.txt'
 EGREEDY_EPS = 0.3
 UCB = True  # True: UCB, False: E-Greedy
 UCB_C = 0.5
-GAMMA = 1.0
+GAMMA = 0.1
 ALPHA = 0.5
 SHOW_TERM = 1000
 
@@ -45,7 +45,7 @@ def make_env(map_filenm, policy):
         amap = Map(f.read())
 
     vel_info = (
-        0, 3,  # vx min / max
+        -3, 3,  # vx min / max
         -3, 3   # vy min / max
     )
 
@@ -102,11 +102,7 @@ def test_egreedy_policy():
 
 def ucb_policy(env, Q, N, state, t, e, uqr_ratios=None, show=False,
                test_action=None):
-    prog = calc_progress(env, Q) + 0.0001
     n = sum(N[state])
-    if n > 300:
-        pass
-    # rarity = UCB_C / prog * np.sqrt(math.log(n) / N[state])
     rarity = UCB_C * np.sqrt(math.log(n) / N[state])
     rv = Q[state] + rarity
     if uqr_ratios is not None:
@@ -116,9 +112,6 @@ def ucb_policy(env, Q, N, state, t, e, uqr_ratios=None, show=False,
             ratio = 0
         else:
             ratio = q_span / r_span
-        # if show:
-            # print("Q span: {}, Rarity Span: {}, Ratio: {}".
-                  # format(q_span, r_span, ratio))
         uqr_ratios.append(ratio)
     return rv
 
@@ -158,6 +151,7 @@ def make_greedy_policy(Q):
         A[best_action] = 1.0
         return A
     return func
+
 
 def _run_step(env, Q, N, state, nA, n_episode, n_step, max_episode,
               uqr_ratios, show, greedy_policy):
@@ -206,7 +200,8 @@ def calc_progress(env, Q):
     return len(Q.keys()) / float(env.num_state_space)
 
 
-def learn_Q(env, max_episode, max_step, ep_steps, ep_progs, ep_uqr_ratios=None):
+def learn_Q(env, max_episode, max_step, ep_steps, ep_progs,
+            ep_uqr_ratios=None):
     nA = env.action_space.n
     Q = defaultdict(lambda: np.zeros(nA))
     N = defaultdict(lambda: np.ones(nA))
@@ -264,7 +259,8 @@ def run():
         ep_steps = []
         ep_progs = []
         ep_uqr_ratios = [] if UCB else None
-        Q = learn_Q(env, max_episode, max_step, ep_steps, ep_progs, ep_uqr_ratios)
+        Q = learn_Q(env, max_episode, max_step, ep_steps, ep_progs,
+                    ep_uqr_ratios)
         env.save(Q, save_filenm)
 
         plt.figure(1)
