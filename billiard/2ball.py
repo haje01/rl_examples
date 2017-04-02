@@ -1,8 +1,14 @@
-import gym
-from gym import spaces
+import random
+from collections import deque
 
-import rendering
-from rendering import pair
+import numpy as np
+import tensorflow as tf
+import scipy
+
+from dqn import DQN, simple_replay_train
+import rendering as rnd
+
+from environment import BilliardEnv, INPUT_SIZE, OUTPUT_SIZE
 
 
 NUM_BALL = 5
@@ -19,61 +25,93 @@ BALL_POS = [
     (550, 200),  # Red
 ]
 
+MAX_EPISODE = 5000
+EGREEDY_EPS = 0.1
+DIS = 0.9
+REPLAY_MEMORY = 5000
+MINIBATCH_SIZE = 10
+HIDDEN_SIZE = 100
 
-class TwoBallEnv(gym.Env):
-    metadata = {
-        'render.modes': ['human', 'rgb_array'],
-        'video.frames_per_second': 60
-    }
 
+class TwoBallEnv(BilliardEnv):
     def __init__(self):
-        self.action_space = spaces.Discrete(rendering.MAX_ACTION)
-        self.observation_space = spaces.Box(low=0, high=255,
-                                            shape=(rendering.IMAGE_HEIGHT,
-                                                   rendering.IMAGE_WIDTH, 4))
-        self.viewer = None
-
-    def _get_obs(self):
-        img = self._get_image()
-        return img
-
-    def _get_image(self):
-        self.viewer.get_image()
-
-    def _reset(self):
-        return self._get_obs()
+        super(TwoBallEnv, self).__init__(BALL_NAME, BALL_COLOR, BALL_POS)
 
     def _step(self, action):
         hit_list, obs = self.viewer.shot_and_get_result(action)
         reward = 1 if len(hit_list) > 0 else 0
+        if reward == 1:
+            print("  Hit")
         done = True
         return obs, reward, done, {}
-
-    def _render(self, mode='human', close=False):
-        if close:
-            if self.viewer is not None:
-                self.viewer.close()
-                self.viewer = None
-            return
-
-        self.query_viewer()
-
-        self.viewer.frame_move()
-        return_rgb = mode == 'rgb_array'
-        return self.viewer.render(return_rgb, True)
-
-    def query_viewer(self):
-        if self.viewer is None:
-            self.viewer = rendering.Viewer(BALL_NAME, BALL_COLOR, BALL_POS)
-        return self.viewer
 
 
 env = TwoBallEnv()
 env.query_viewer()
 
 
+def bot_play(mainDQN):
+    env.reset()
+    while True:
+        env._render()
+        if env.viewer.move_end():
+            s = env._get_obs()
+            a = np.argmax(mainDQN.predict(s))
+            env.viewer.shot((a, 5))
+
+
 def train():
-    obs, reward, done, _ = env.step(pair(25, 10))
+    replay_buffer = deque()
+
+    with tf.Session() as sess:
+        mainDQN = DQN(sess, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE)
+        tf.global_variables_initializer().run()
+
+        state = env.reset()
+
+        for eidx in range(MAX_EPISODE):
+            eps = 1. / ((eidx / (MAX_EPISODE * 0.2)) + 1)
+            done = False
+
+            if np.random.rand(1) < eps:
+                action = env.action_space.sample()
+                print("  Random shot")
+            else:
+                action = np.argmax(mainDQN.predict(state))
+                #scipy.misc.imsave('shot.png', state.reshape(rnd.OBS_HEIGHT,
+                                                            #rnd.OBS_WIDTH,
+                                                            #rnd.OBS_DEPTH))
+
+            next_state, reward, done, _ = env.step((action, 5))
+            if done:
+                reward = -1
+
+            replay_buffer.append((state, action, reward, next_state, done))
+            if len(replay_buffer) > REPLAY_MEMORY:
+                replay_buffer.popleft()
+
+            state = next_state
+
+            if eidx % 10 == 0 and len(replay_buffer) > MINIBATCH_SIZE:
+                for _ in range(50):
+                    minibatch = random.sample(replay_buffer, MINIBATCH_SIZE)
+                    loss, _ = simple_replay_train(mainDQN, minibatch, DIS)
+                print("Episode {} EPS {} ReplayBuffer {} Loss: {}".format(eidx,
+                                                                          eps,
+                                                                          len(replay_buffer),
+                                                                          loss))
+
+        bot_play(mainDQN)
+
+
+def save_minibatch(minibatch):
+    for i in range(MINIBATCH_SIZE):
+        state = minibatch[i][0]
+        fname = "minibatch_{:03d}.png".format(i)
+        scipy.misc.imsave(fname, state.reshape(rnd.OBS_HEIGHT, rnd.OBS_WIDTH,
+                                               rnd.OBS_DEPTH))
+        if i > 10:
+            break
 
 
 def test_shot():
@@ -82,7 +120,7 @@ def test_shot():
         env._render()
         if not shot:
             # env.viewer.random_shot()
-            env.viewer.shot(pair(15, 10))
+            env.viewer.shot(15, 10)
             shot = True
         if env.viewer.move_end():
             print(env.viewer.hit_list)

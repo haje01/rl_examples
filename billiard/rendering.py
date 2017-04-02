@@ -25,8 +25,9 @@ CIRCLE_DEGREE = 360
 DIV_OF_CIRCLE = 60
 DIV_OF_FORCE = 10
 ACTION_DEGREE = CIRCLE_DEGREE / DIV_OF_CIRCLE
-IMAGE_WIDTH = math.ceil(WIN_WIDTH / GET_IMAGE_SKIP)
-IMAGE_HEIGHT = math.ceil(WIN_HEIGHT / GET_IMAGE_SKIP)
+OBS_WIDTH = math.ceil(WIN_WIDTH / GET_IMAGE_SKIP)
+OBS_HEIGHT = math.ceil(WIN_HEIGHT / GET_IMAGE_SKIP)
+OBS_DEPTH = 4
 NUM_BALL = 5
 BALL_NAME = [
     "Cue",
@@ -59,33 +60,6 @@ CON_HIT_LIMIT = 1
 circle = None
 ball_pos = [WIN_WIDTH * 0.5, WIN_HEIGHT * 0.5]
 ball_vel = np.array([0, 0])
-
-
-def depair(z):
-    """
-    Inverse of Cantor pairing function
-    http://en.wikipedia.org/wiki/Pairing_function#Inverting_the_Cantor_pairing_function
-    """
-    w = math.floor((math.sqrt(8 * z + 1) - 1)/2)
-    t = (w**2 + w) / 2
-    y = int(z - t)
-    x = int(w - y)
-    # assert z != pair(x, y, safe=False):
-    return x, y
-
-
-def pair(k1, k2, safe=True):
-    """
-    Cantor pairing function
-    http://en.wikipedia.org/wiki/Pairing_function#Cantor_pairing_function
-    """
-    z = int(0.5 * (k1 + k2) * (k1 + k2 + 1) + k2)
-    if safe and (k1, k2) != depair(z):
-        raise ValueError("{} and {} cannot be paired".format(k1, k2))
-    return z
-
-
-MAX_ACTION = pair(DIV_OF_CIRCLE, DIV_OF_FORCE)
 
 
 def make_circle(ptcnt):
@@ -134,13 +108,16 @@ def draw_wall():
     draw_polygon(v)
 
 
-class Ball(object):
+class Ball:
     circle = make_circle(BALL_POINTS)
+    min_pos = np.array([WALL_DEPTH + BALL_RAD, WALL_DEPTH + BALL_RAD])
+    max_pos = np.array([WIN_WIDTH - WALL_DEPTH - BALL_RAD, WIN_HEIGHT -
+                        WALL_DEPTH - BALL_RAD])
 
     def __init__(self, name, no, pos, color):
         self.name = name
         self.no = no
-        self.pos = pos
+        self.pos = np.array(pos)
         self.color = color
         self.vel = np.array([0, 0])
         self.hit = False
@@ -203,30 +180,18 @@ class Ball(object):
         other.vel = nov
 
     def update(self):
-        x, y = self.pos
-        vx, vy = self.vel
-        x, y = x + vx * FIX_DELTA, y + vy * FIX_DELTA
+        self.pos = self.pos + self.vel*FIX_DELTA
 
-        x_min = WALL_DEPTH + BALL_RAD
-        x_max = WIN_WIDTH - WALL_DEPTH - BALL_RAD
-        y_min = WALL_DEPTH + BALL_RAD
-        y_max = WIN_HEIGHT - WALL_DEPTH - BALL_RAD
-
-        if x < x_min:
-            x = x_min
-            vx *= -1
-        if x > x_max:
-            x = x_max
-            vx *= -1
-        if y < y_min:
-            y = y_min
-            vy *= -1
-        if y > y_max:
-            y = y_max
-            vy *= -1
-        self.pos = [x, y]
-        self.vel = np.array([vx, vy])
-        self.vel = decelerate([vx, vy])
+        if self.pos[0] < Ball.min_pos[0]:
+            self.vel[0] *= -1
+        if self.pos[0] > Ball.max_pos[0]:
+            self.vel[0] *= -1
+        if self.pos[1] < Ball.min_pos[1]:
+            self.vel[1] *= -1
+        if self.pos[1] > Ball.max_pos[1]:
+            self.vel[1] *= -1
+        self.pos = np.clip(self.pos, Ball.min_pos, Ball.max_pos)
+        self.vel = decelerate(self.vel)
 
 
 def decelerate(vel, fric_rate=FRICTION_RATE):
@@ -248,7 +213,7 @@ def get_display(spec):
         raise error.Error("Invalid display spec {}".format(spec))
 
 
-class Viewer(object):
+class Viewer:
 
     def __init__(self, ball_name, ball_color, ball_pos, display=None):
         display = get_display(display)
@@ -289,22 +254,24 @@ class Viewer(object):
         self.render()
 
     def shot(self, action):
+        deg, force = action
         self.hit_list = []
-        deg, force = depair(action)
         deg *= 360 / DIV_OF_CIRCLE
         rad = math.radians(deg)
         force *= 1 / DIV_OF_FORCE
         vel = force * MAX_VEL
         vx = math.sin(rad) * vel
         vy = math.cos(rad) * vel
-        print("shot: deg {}, force {}, vx {}, vy {}".format(deg, force, vx,
-                                                            vy))
+        print("shot: deg {}, force {:.2f}, vx {:.2f}, vy {:.2f}".format(deg,
+                                                                        force,
+                                                                        vx,
+                                                                        vy))
         self.balls[0].vel = np.array([vx, vy])
 
     def random_shot(self):
         deg = random.randint(0, DIV_OF_CIRCLE)
         force = random.randint(0, DIV_OF_FORCE)
-        self.shot(pair(deg, force))
+        self.shot((deg, force))
 
     def draw_ball(self):
         for ball in self.balls:
@@ -345,14 +312,17 @@ class Viewer(object):
         self.window.dispatch_events()
         draw_wall()
         self.draw_ball()
+        arr = None
+        if return_rgb_array:
+            arr = self._get_image()
         if window_flip:
-            window.flip()
+            self.window.flip()
+        return arr
 
     def close(self):
         self.window.close()
 
-    def get_image(self):
-        self.window.flip()
+    def _get_image(self):
         buffer = pyglet.image.get_buffer_manager().get_color_buffer()
         image_data = buffer.get_image_data()
         arr = np.fromstring(image_data.data, dtype=np.uint8, sep='')
@@ -361,11 +331,11 @@ class Viewer(object):
         return arr
 
     def _get_obs(self):
-        img = self.get_image()
-        return img
+        img = self._get_image()
+        return tuple(img.ravel())
 
     def save_image(self, fname):
-        arr = self.get_image()
+        arr = self._get_image()
         scipy.misc.imsave(fname, arr)
 
     def shot_and_get_result(self, action):
@@ -381,5 +351,5 @@ class Viewer(object):
 if __name__ == "__main__":
     viewer = Viewer(BALL_NAME, BALL_COLOR, BALL_POS)
     pyglet.clock.schedule(viewer.frame_move)
-    viewer.shot(pair(0, 10))
+    viewer.shot((15, 5))
     pyglet.app.run()
