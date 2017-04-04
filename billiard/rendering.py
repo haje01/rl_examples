@@ -119,8 +119,11 @@ class Ball:
         self.no = no
         self.pos = np.array(pos)
         self.color = color
-        self.vel = np.array([0, 0])
+        self.reset_vel()
         self.hit = False
+
+    def reset_vel(self):
+        self.vel = np.array([0, 0])
 
     def __repr__(self):
         return self.name
@@ -262,10 +265,10 @@ class Viewer:
         vel = force * MAX_VEL
         vx = math.sin(rad) * vel
         vy = math.cos(rad) * vel
-        print("shot: deg {}, force {:.2f}, vx {:.2f}, vy {:.2f}".format(deg,
-                                                                        force,
-                                                                        vx,
-                                                                        vy))
+        #print("shot: deg {}, force {:.2f}, vx {:.2f}, vy {:.2f}".format(deg,
+        #                                                                force,
+        #                                                                vx,
+        #                                                                vy))
         self.balls[0].vel = np.array([vx, vy])
 
     def random_shot(self):
@@ -332,7 +335,7 @@ class Viewer:
 
     def _get_obs(self):
         img = self._get_image()
-        return tuple(img.ravel())
+        return img.ravel()
 
     def save_image(self, fname):
         arr = self._get_image()
@@ -347,6 +350,15 @@ class Viewer:
         self.render(True)
         return self.hit_list[:], self._get_obs()
 
+    def store_balls(self):
+        self.balls_store = {}
+        for ball in self.balls:
+            self.balls_store[ball] = ball.pos
+
+    def restore_balls(self):
+        for ball in self.balls:
+            ball.pos = self.balls_store[ball]
+            ball.reset_vel()
 
 if __name__ == "__main__":
     viewer = Viewer(BALL_NAME, BALL_COLOR, BALL_POS)
