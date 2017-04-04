@@ -1,9 +1,10 @@
+import time
 import random
 from collections import deque
 
+import click
 import numpy as np
 import tensorflow as tf
-import scipy
 
 from network import DQN, simple_replay_train, NN
 import rendering as rnd
@@ -24,14 +25,6 @@ BALL_POS = [
     (150, 200),  # Cue
     (550, 200),  # Red
 ]
-
-MAX_EPISODE = 20000
-EGREEDY_EPS = 0.1
-DIS = 0.9
-REPLAY_MEMORY = 20000
-MINIBATCH_SIZE = 10
-HIDDEN_SIZE = 50
-LEARNING_STEP = 20
 
 
 class TwoBallEnv(BilliardEnv):
@@ -81,60 +74,145 @@ class TwoBallEnv(BilliardEnv):
         return all_shots
 
 
-env = TwoBallEnv()
-env.query_viewer()
+@click.group()
+def cli():
+    pass
 
 
-def dqn_bot_play(dqn):
+@cli.group(help="Train model and save it.")
+def train():
+    pass
+
+
+@cli.group(help="Test accuracy of saved model.")
+def test():
+    pass
+
+
+@cli.group(help="Bot play from saved model.")
+def botplay():
+    pass
+
+
+@cli.group(help="Shot to test dynamics.")
+def shottest():
+    pass
+
+
+@cli.group(help="Human play with bot.")
+def play(playcnt):
+    pass
+
+
+@botplay.command('dqn')
+@click.argument('model_path')
+@click.option('--hidden', 'hidden_size', default=100, show_default=True,
+              help="Hidden layer size.")
+@click.option('--playcnt', 'play_cnt', show_default=True, default=100,
+              help="Play episode count.")
+def dqn_bot_play(model_path, hidden_size, play_cnt):
+    env = TwoBallEnv()
+    env.query_viewer()
     env.reset()
-    while True:
-        env._render()
-        if env.viewer.move_end():
-            s = env._get_obs()
-            a = np.argmax(dqn.predict(s))
-            env.viewer.shot((a, 5))
+
+    with tf.Session() as sess:
+        dqn = DQN(sess, INPUT_SIZE, hidden_size, OUTPUT_SIZE)
+        dqn.load(model_path)
+
+        for i in range(play_cnt):
+            env._render()
+            if env.viewer.move_end():
+                s = env._get_obs()
+                a = np.argmax(dqn.predict(s))
+                env.viewer.shot((a, 5))
 
 
-def nn_test(nn, viewer):
-    print("NN Test start")
-    hit_cnt = 0
-    s = env.reset()
-    test_cnt = 1000
-    for i in range(test_cnt):
-        a = np.argmax(nn.predict(s))
-        hit_list, s = viewer.shot_and_get_result((a, 5))
-        reward = 1 if len(hit_list) > 0 else 0
-        if i % 100 == 0:
-            print("episode {} action {} reward {}".format(i, a, reward))
-        if reward == 1:
-            hit_cnt += 1
-    print("Accuracy: {}".format(float(hit_cnt) / test_cnt))
+@test.command('nn')
+@click.argument('model_path')
+@click.option('--hidden', 'hidden_size', default=100, show_default=True,
+              help="Hidden layer size.")
+@click.option('--test', 'test_cnt', default=1000, show_default=True,
+              help="Test episode count.")
+def test_nn(model_path, hidden_size, test_cnt):
+    env = TwoBallEnv()
+    env.query_viewer()
+
+    with tf.Session() as sess:
+        nn = NN(sess, INPUT_SIZE, hidden_size, OUTPUT_SIZE)
+        nn.load(model_path)
+        tf.global_variables_initializer().run()
+
+        hit_cnt = 0
+        s = env.reset()
+        for i in range(test_cnt):
+            a = np.argmax(nn.predict(s))
+            hit_list, s = env.viewer.shot_and_get_result((a, 5))
+            reward = 1 if len(hit_list) > 0 else 0
+            if i % 100 == 0:
+                print("episode {} action {} reward {}".format(i, a, reward))
+            if reward == 1:
+                hit_cnt += 1
+        print("Accuracy: {}".format(float(hit_cnt) / test_cnt))
 
 
-def nn_bot_play(nn):
+@botplay.command('nn')
+@click.argument('model_path')
+@click.option('--hidden', 'hidden_size', default=100, show_default=True,
+              help="Hidden layer size.")
+@click.option('--playcnt', 'play_cnt', default=100, show_default=True,
+              help="Play episode count.")
+def nn_bot_play(model_path, hidden_size, play_cnt):
+    env = TwoBallEnv()
+    env.query_viewer()
     env.reset()
-    while True:
-        env._render()
-        if env.viewer.move_end():
+
+    with tf.Session() as sess:
+        nn = NN(sess, INPUT_SIZE, hidden_size, OUTPUT_SIZE)
+        nn.load(model_path)
+        for i in range(play_cnt):
+            # shot
             s = env._get_obs()
             s = np.random.randint(0, 255, (1, 33500))
             probs = nn.predict(s)
-            import pdb; pdb.set_trace()  # XXX BREAKPOINT
             a = np.argmax(probs)
             env.viewer.shot((a, 5))
 
+            # wait
+            time.sleep(1)
+            while True:
+                env._render()
+                if env.viewer.move_end():
+                    break
 
-def train_dqn():
+
+@train.command('dqn')
+@click.option('--episode', 'episode_size', default=10000, show_default=True,
+              help="Learning episode number.")
+@click.option('--hidden', 'hidden_size', default=100, show_default=True,
+              help="Hidden layer size.")
+@click.option('--showstep', 'show_step', default=20, show_default=True,
+              help="Step for display learning status.")
+@click.option('--gamma', default=0.9, show_default=True, help='Gamma for TD.')
+@click.option('--replay', 'replay_size', default=10000, show_default=True,
+              help="Replay buffer size.")
+@click.option('--minibatch', 'minibatch_size', default=10, show_default=True,
+              help="Minibatch size.")
+@click.option('--modelpath', 'model_path', default="saved/2ball_dqn_model",
+              show_default=True, help="Model save path.")
+def train_dqn(episode_size, hidden_size, show_step, gamma, replay_size,
+              minibatch_size, model_path):
+    env = TwoBallEnv()
+    env.query_viewer()
     replay_buffer = deque()
 
     with tf.Session() as sess:
-        mainDQN = DQN(sess, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE)
+        mainDQN = DQN(sess, INPUT_SIZE, hidden_size, OUTPUT_SIZE)
         tf.global_variables_initializer().run()
 
         state = env.reset()
 
-        for eidx in range(MAX_EPISODE):
-            eps = 1. / ((eidx / (MAX_EPISODE * 0.1)) + 1)
+        for eidx in range(episode_size):
+            eps = 1. / ((eidx / (episode_size * 0.1)) + 1)
             done = False
 
             action = env.good_random_shot()
@@ -153,37 +231,40 @@ def train_dqn():
                 reward = -1
 
             replay_buffer.append((state, action, reward, next_state, done))
-            if len(replay_buffer) > REPLAY_MEMORY:
+            if len(replay_buffer) > replay_size:
                 replay_buffer.popleft()
 
             state = next_state
 
-            if eidx % LEARNING_STEP == 0 and len(replay_buffer) > MINIBATCH_SIZE:
+            if eidx % show_step == 0 and len(replay_buffer) > minibatch_size:
                 for _ in range(50):
-                    minibatch = random.sample(replay_buffer, MINIBATCH_SIZE)
-                    loss, _ = simple_replay_train(mainDQN, minibatch, DIS)
-                print("Episode {} EPS {} ReplayBuffer {} Loss: {}".format(eidx,
-                                                                          eps,
-                                                                          len(replay_buffer),
-                                                                          loss))
-
-        while True:
-            res = input("Learning finished. Enter 'y' to bot play: ")
-            if res == 'y':
-                dqn_bot_play(mainDQN)
+                    minibatch = random.sample(replay_buffer, minibatch_size)
+                    loss, _ = simple_replay_train(mainDQN, minibatch, gamma)
+                print("Episode {} EPS {} ReplayBuffer {} Loss: {}".
+                      format(eidx, eps, len(replay_buffer), loss))
+        mainDQN.save(model_path)
 
 
-def train_nn():
-    buf = deque()
-    save_path = None
+@train.command('nn')
+@click.option('--episode', 'episode_size', default=10000, show_default=True,
+              help="Learning episode number.")
+@click.option('--hidden', 'hidden_size', default=100, show_default=True,
+              help="Hidden layer size.")
+@click.option('--showstep', 'show_step', default=20, show_default=True,
+              help="Step for display learning status.")
+@click.option('--modelpath', 'model_path', default="saved/2ball_nn_model",
+              show_default=True, help="Model save path.")
+def train_nn(episode_size, hidden_size, show_step, model_path):
+    env = TwoBallEnv()
+    env.query_viewer()
 
     with tf.Session() as sess:
-        nn = NN(sess, INPUT_SIZE, 200, OUTPUT_SIZE)
+        nn = NN(sess, INPUT_SIZE, hidden_size, OUTPUT_SIZE)
         tf.global_variables_initializer().run()
 
         state = env.reset()
 
-        for eidx in range(1):
+        for eidx in range(episode_size):
             # y = env.all_good_shots()
             y = [env.all_good_shots()]
             summary, cross_entropy, Y, logits, train = nn.update(state, y)
@@ -191,36 +272,20 @@ def train_nn():
             state, reward, done, _ = env.step((a, 5))
             nn.train_writer.add_summary(summary, eidx)
             if eidx % 10 == 0:
-                print("Cross entropy {}, Y {}, logits {}".format(cross_entropy, Y, logits))
+                print("Cross entropy {}, Y {}, logits {}".format(cross_entropy,
+                                                                 Y, logits))
             if reward == 1:
                 print("Episode {} Hit".format(eidx))
 
-        save_path = nn.save('saved/2ball_nn_model.ckpt')
+        nn.save(model_path)
 
 
-    tf.reset_default_graph()
-    with tf.Session() as sess:
-        nn = NN(sess, INPUT_SIZE, 200, OUTPUT_SIZE)
-        nn.load(save_path)
-        nn_test(nn, env.viewer)
-        #while True:
-            #res = input("Learning finished. Enter 'y' to bot play: ")
-            #if res == 'y':
-                #nn_bot_play(nn)
-
-
-def save_minibatch(minibatch):
-    for i in range(MINIBATCH_SIZE):
-        state = minibatch[i][0]
-        fname = "minibatch_{:03d}.png".format(i)
-        scipy.misc.imsave(fname, state.reshape(rnd.OBS_HEIGHT, rnd.OBS_WIDTH,
-                                               rnd.OBS_DEPTH))
-        if i > 10:
-            break
-
-
-def test_shot():
+@shottest.command('1')
+def test_shot_1():
+    env = TwoBallEnv()
+    env.query_viewer()
     shot = False
+
     while True:
         env._render()
         if not shot:
@@ -234,5 +299,6 @@ def test_shot():
 
 if __name__ == '__main__':
     # train_dqn()
-    train_nn()
-    env.viewer.save_image('result.png')
+    # train_nn()
+    # env.viewer.save_image('result.png')
+    cli(obj={})

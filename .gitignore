@@ -9,3 +9,4 @@ __pycache__
 *.tf
 .ropeproject
 checkpoint
+.DS_Store
