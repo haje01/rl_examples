@@ -1,3 +1,3 @@
-# RL Drills
+# RL Drill
 
 Excercise Reinforcement Learning 
