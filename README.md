@@ -1,3 +1,3 @@
-# RL Examples
+# RL Drills
 
-Reinforcement Learning Examples
+Excercise Reinforcement Learning 
