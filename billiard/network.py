@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import tensorflow as tf
 
@@ -9,7 +11,16 @@ class Network:
     def _build_network(self):
         self.saver = tf.train.Saver()
 
+    def _get_model_info(self):
+        raise NotImplemented()
+
     def save(self, path):
+        # save model info
+        with open(path + '.json', 'w') as f:
+            info = json.dumps(self._get_model_info())
+            f.write(info)
+
+        # save model
         save_path = self.saver.save(self.session, path)
         print("NN Model saved in file: {}".format(save_path))
         return save_path
@@ -20,31 +31,49 @@ class Network:
 
 
 class NN(Network):
-    def __init__(self, session, input_size, h1_size, l_rate, output_size,
+
+    @staticmethod
+    def create_from_model_info(session, info_path):
+        model_path = info_path.split('.')[0]
+        with open(info_path, 'r') as f:
+            data = f.read()
+        info = json.loads(data)
+        nn = NN(session, info['input_size'], info['h_size'], info['l_rate'],
+                info['output_size'])
+        nn.load(model_path)
+        return nn
+
+    def __init__(self, session, input_size, h_size, l_rate, output_size,
                  name="main"):
         super(NN, self).__init__()
 
         self.session = session
         self.input_size = input_size
-        self.h1_size = h1_size
+        self.h_size = h_size
         self.output_size = output_size
+        self.l_rate = l_rate
         self.net_name = name
 
         self._build_network(l_rate)
+
+    def _get_model_info(self):
+        data = dict(input_size=self.input_size, h_size=self.h_size,
+                    l_rate=self.l_rate, output_size=self.output_size)
+        return data
 
     def _build_network(self, l_rate):
         # Hidden 1
         with tf.variable_scope(self.net_name):
             self._X = tf.placeholder(tf.float32, [1, self.input_size],
                                      name="input_x")
-            shape = [self.input_size, self.h1_size]
+            shape = [self.input_size, self.h_size]
             initial = tf.truncated_normal(shape, stddev=0.1)
             self.W1 = tf.get_variable("W1", initializer=initial)
-            initial = tf.constant(0.1, shape=[self.h1_size])
+            initial = tf.constant(0.1, shape=[self.h_size])
             self.bias1 = tf.get_variable("b1", initializer=initial)
             self.layer1 = tf.nn.relu(tf.matmul(self._X, self.W1) + self.bias1)
 
-            shape = [self.h1_size, self.output_size]
+            shape = [self.h_size, self.output_size]
             initial = tf.truncated_normal(shape, stddev=0.1)
             self.W2 = tf.get_variable("W2", initializer=initial)
             initial = tf.constant(0.1, shape=[self.output_size])
@@ -82,6 +111,18 @@ class NN(Network):
 
 
 class DQN:
+
+    @staticmethod
+    def create_from_model_info(session, info_path):
+        model_path = info_path.split('.')[0]
+        with open(info_path, 'r') as f:
+            data = f.read()
+        info = json.loads(data)
+        dqn = DQN(session, info['input_size'], info['h_size'], info['l_rate'],
+                  info['output_size'])
+        dqn.load(model_path)
+        return dqn
+
     def __init__(self, session, input_size, h_size, l_rate, output_size,
                  name="main"):
         super(DQN, self).__init__()
@@ -89,10 +130,16 @@ class DQN:
         self.session = session
         self.input_size = input_size
         self.h_size = h_size
+        self.l_rate = l_rate
         self.output_size = output_size
         self.net_name = name
 
         self._build_network(l_rate)
+
+    def _get_model_info(self):
+        data = dict(input_size=self.input_size, h_size=self.h_size,
+                    l_rate=self.l_rate, output_size=self.output_size)
+        return data
 
     def _build_network(self, l_rate):
         with tf.variable_scope(self.net_name):

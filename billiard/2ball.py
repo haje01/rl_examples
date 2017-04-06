@@ -62,6 +62,8 @@ class TwoBallEnv(BilliardEnv):
             if reward == 1:
                 all_shots[a] = 1
         s = sum(all_shots)
+        if s == 0:
+            return np.array([1/rnd.DIV_OF_CIRCLE] * rnd.DIV_OF_CIRCLE)
         return np.array(all_shots) / s
 
     def first_good_shot(self):
@@ -110,8 +112,6 @@ def play(playcnt):
 @click.argument('model_path')
 @click.option('--hidden', 'hidden_size', default=100, show_default=True,
               help="Hidden layer size.")
-@click.option('--lrate', 'l_rate', default=0.1, show_default=True,
-              help="Learning rate.")
 @click.option('--playcnt', 'play_cnt', show_default=True, default=100,
               help="Play episode count.")
 def dqn_bot_play(model_path, hidden_size, l_rate, play_cnt):
@@ -120,8 +120,7 @@ def dqn_bot_play(model_path, hidden_size, l_rate, play_cnt):
     env.reset()
 
     with tf.Session() as sess:
-        dqn = DQN(sess, env.input_size, hidden_size, l_rate, OUTPUT_SIZE)
-        dqn.load(model_path)
+        dqn = DQN.create_from_model_info(sess, model_path + '.json')
 
         for i in range(play_cnt):
             env._render()
@@ -132,24 +131,23 @@ def dqn_bot_play(model_path, hidden_size, l_rate, play_cnt):
 
 
 @test.command('nn')
-@click.argument('model_path')
 @click.option('--hidden', 'hidden_size', default=100, show_default=True,
               help="Hidden layer size.")
 @click.option('--test', 'test_cnt', default=1000, show_default=True,
               help="Test episode count.")
-def test_nn(model_path, hidden_size, test_cnt):
+def test_nn(model_info_path, hidden_size, test_cnt):
     env = TwoBallEnv()
     env.query_viewer()
 
     with tf.Session() as sess:
         nn = NN(sess, env.input_size, hidden_size, OUTPUT_SIZE)
-        nn.load(model_path)
         tf.global_variables_initializer().run()
 
         hit_cnt = 0
         s = env.reset()
         for i in range(test_cnt):
-            a = np.argmax(nn.predict(s))
+            prob = nn.predict(s)
+            a = np.random.choice(np.nonzero(prob == prob.max())[0])
             hit_list, s = env.viewer.shot_and_get_result((a, DEFAULT_FORCE))
             reward = 1 if len(hit_list) > 0 else 0
             if i % 100 == 0:
@@ -161,24 +159,21 @@ def test_nn(model_path, hidden_size, test_cnt):
 
 @botplay.command('nn')
 @click.argument('model_path')
-@click.option('--hidden', 'hidden_size', default=100, show_default=True,
-              help="Hidden layer size.")
 @click.option('--playcnt', 'play_cnt', default=100, show_default=True,
               help="Play episode count.")
-def nn_bot_play(model_path, hidden_size, play_cnt):
+def nn_bot_play(model_path, play_cnt):
     env = TwoBallEnv()
     env.query_viewer()
     env.reset()
 
     with tf.Session() as sess:
-        nn = NN(sess, env.input_size, hidden_size, OUTPUT_SIZE)
-        nn.load(model_path)
+        nn = NN.create_from_model_info(sess, model_path + '.json')
         for i in range(play_cnt):
             # shot
             s = env._get_obs()
-            probs = nn.predict(s)
-            a = np.argmax(probs)
-            import pdb; pdb.set_trace()  # XXX BREAKPOINT
+            prob = nn.predict(s)
+            a = np.argmax(prob)
+            print("state {}, prob {}, action {}".format(s, prob, a))
             env.viewer.shot((a, DEFAULT_FORCE))
 
             # wait
@@ -194,24 +189,28 @@ def nn_bot_play(model_path, hidden_size, play_cnt):
               help="Learning episode number.")
 @click.option('--hidden', 'hidden_size', default=100, show_default=True,
               help="Hidden layer size.")
+@click.option('--lrate', 'l_rate', default=0.1, show_default=True,
+              help="Learning rate.")
 @click.option('--showstep', 'show_step', default=20, show_default=True,
               help="Step for display learning status.")
 @click.option('--gamma', default=0.9, show_default=True, help='Gamma for TD.')
-@click.option('--replay', 'replay_size', default=10000, show_default=True,
+@click.option('--repbuf', 'replay_size', default=10000, show_default=True,
               help="Replay buffer size.")
+@click.option('--repcnt', 'replay_cnt', default=50, show_default=True,
+              help="Model save path.")
 @click.option('--minibatch', 'minibatch_size', default=10, show_default=True,
               help="Minibatch size.")
 @click.option('--modelpath', 'model_path', default="saved/2ball_dqn_model",
               show_default=True, help="Model save path.")
-def train_dqn(episode_size, hidden_size, show_step, gamma, replay_size,
-              minibatch_size, model_path):
+def train_dqn(episode_size, hidden_size, l_rate, show_step, gamma, replay_size,
+              replay_cnt, minibatch_size, model_path):
     st = time.time()
     env = TwoBallEnv()
     env.query_viewer()
     replay_buffer = deque()
 
     with tf.Session() as sess:
-        mainDQN = DQN(sess, env.input_size, hidden_size, OUTPUT_SIZE)
+        mainDQN = DQN(sess, env.input_size, hidden_size, l_rate, OUTPUT_SIZE)
         tf.global_variables_initializer().run()
 
         state = env.reset()
@@ -226,7 +225,7 @@ def train_dqn(episode_size, hidden_size, show_step, gamma, replay_size,
                 #action = env.good_random_shot()
                 #print("  Random shot")
             #else:
-                #action = np.argmax(mainDQN.predict(state))
+                # action = np.random.choice(np.nonzero(prob == prob.max())[0])
                 ##scipy.misc.imsave('shot.png', state.reshape(rnd.OBS_HEIGHT,
                                                             ##rnd.OBS_WIDTH,
                                                             ##rnd.OBS_DEPTH))
@@ -242,7 +241,7 @@ def train_dqn(episode_size, hidden_size, show_step, gamma, replay_size,
             state = next_state
 
             if eidx % show_step == 0 and len(replay_buffer) > minibatch_size:
-                for _ in range(50):
+                for _ in range(replay_cnt):
                     minibatch = random.sample(replay_buffer, minibatch_size)
                     loss, _ = simple_replay_train(mainDQN, minibatch, gamma)
                 print("Episode {} EPS {} ReplayBuffer {} Loss: {}".
@@ -275,17 +274,19 @@ def train_nn(episode_size, hidden_size, l_rate, show_step, model_path):
         state = env.reset()
 
         for eidx in range(episode_size):
-            # y = env.all_good_shots()
             y = [env.all_good_shots()]
             summary, cross_entropy, Y, logits, train = nn.update(state, y)
-            a = np.argmax(y)
+            y = np.array(y[0])
+            a = np.random.choice(np.nonzero(y == y.max())[0])
             state, reward, done, _ = env.step((a, DEFAULT_FORCE))
             nn.train_writer.add_summary(summary, eidx)
-            if eidx % 10 == 0:
-                print("Episode {}, Cross entropy {:.2f}, Y {}, logits {}".\
-                      format(eidx, cross_entropy, Y, logits))
+            if eidx % show_step == 0:
+                print("Episode {}, Cross entropy {:.2f}, Y {}, logits {}, "
+                      "action {}".format(eidx, cross_entropy, Y, logits, a))
             # if reward == 1:
             #    print("Episode {} Hit".format(eidx))
+            if eidx % 100 == 0:
+                nn.save(model_path)
 
         nn.save(model_path)
 
