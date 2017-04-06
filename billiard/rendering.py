@@ -334,8 +334,7 @@ class Viewer:
         return arr
 
     def _get_obs(self):
-        img = self._get_image()
-        return img.ravel()
+        return np.array([ball.pos for ball in self.balls]).ravel()
 
     def save_image(self, fname):
         arr = self._get_image()

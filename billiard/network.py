@@ -10,9 +10,6 @@ class Network:
         self.saver = tf.train.Saver()
 
     def save(self, path):
-        assert self.saver is not None
-
-    def save(self, path):
         save_path = self.saver.save(self.session, path)
         print("NN Model saved in file: {}".format(save_path))
         return save_path
@@ -23,7 +20,8 @@ class Network:
 
 
 class NN(Network):
-    def __init__(self, session, input_size, h1_size, output_size, name="main"):
+    def __init__(self, session, input_size, h1_size, l_rate, output_size,
+                 name="main"):
         super(NN, self).__init__()
 
         self.session = session
@@ -32,9 +30,9 @@ class NN(Network):
         self.output_size = output_size
         self.net_name = name
 
-        self._build_network()
+        self._build_network(l_rate)
 
-    def _build_network(self, l_rate=0.1):
+    def _build_network(self, l_rate):
         # Hidden 1
         with tf.variable_scope(self.net_name):
             self._X = tf.placeholder(tf.float32, [1, self.input_size],
@@ -62,7 +60,8 @@ class NN(Network):
         self._train = tf.train.AdamOptimizer(learning_rate=l_rate).\
             minimize(self._cross_entropy)
 
-        correct_prediction = tf.equal(tf.argmax(self._Y, 1), tf.argmax(self._logits, 1))
+        correct_prediction = tf.equal(tf.argmax(self._Y, 1),
+                                      tf.argmax(self._logits, 1))
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         tf.summary.scalar('accuracy', accuracy)
 
@@ -71,19 +70,20 @@ class NN(Network):
 
         super(NN, self)._build_network()
 
-
     def predict(self, state):
         x = np.reshape(state, [1, self.input_size])
         return self.session.run(self._logits, feed_dict={self._X: x})
 
     def update(self, state, y):
         x = np.reshape(state, [1, self.input_size])
-        return self.session.run([self._merged, self._cross_entropy, self._Y, self._logits, self._train],
+        return self.session.run([self._merged, self._cross_entropy, self._Y,
+                                 self._logits, self._train],
                                 feed_dict={self._X: x, self._Y: y})
 
 
 class DQN:
-    def __init__(self, session, input_size, h_size, output_size, name="main"):
+    def __init__(self, session, input_size, h_size, l_rate, output_size,
+                 name="main"):
         super(DQN, self).__init__()
 
         self.session = session
@@ -92,9 +92,9 @@ class DQN:
         self.output_size = output_size
         self.net_name = name
 
-        self._build_network()
+        self._build_network(l_rate)
 
-    def _build_network(self, l_rate=1e-1):
+    def _build_network(self, l_rate):
         with tf.variable_scope(self.net_name):
             self._X = tf.placeholder(tf.float32, [None, self.input_size],
                                      name="input_x")
