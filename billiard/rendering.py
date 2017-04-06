@@ -27,7 +27,7 @@ DIV_OF_FORCE = 10
 ACTION_DEGREE = CIRCLE_DEGREE / DIV_OF_CIRCLE
 OBS_WIDTH = math.ceil(WIN_WIDTH / GET_IMAGE_SKIP)
 OBS_HEIGHT = math.ceil(WIN_HEIGHT / GET_IMAGE_SKIP)
-OBS_DEPTH = 4
+OBS_DEPTH = 3
 NUM_BALL = 5
 BALL_NAME = [
     "Cue",
@@ -330,11 +330,11 @@ class Viewer:
         image_data = buffer.get_image_data()
         arr = np.fromstring(image_data.data, dtype=np.uint8, sep='')
         arr = arr.reshape(WIN_HEIGHT, WIN_WIDTH, 4)
-        arr = arr[::GET_IMAGE_SKIP, ::GET_IMAGE_SKIP, ]
+        arr = arr[::GET_IMAGE_SKIP, ::GET_IMAGE_SKIP, 0:3]
         return arr
 
     def _get_obs(self):
-        return np.array([ball.pos for ball in self.balls]).ravel()
+        return self._get_image()
 
     def save_image(self, fname):
         arr = self._get_image()

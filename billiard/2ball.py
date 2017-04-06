@@ -2,6 +2,7 @@ import time
 import random
 from collections import deque
 
+import scipy
 import click
 import numpy as np
 import tensorflow as tf
@@ -9,7 +10,7 @@ import tensorflow as tf
 from network import DQN, simple_replay_train, NN
 import rendering as rnd
 
-from environment import BilliardEnv, OUTPUT_SIZE
+from environment import BilliardEnv, INPUT_SIZE, OUTPUT_SIZE
 
 
 NUM_BALL = 5
@@ -268,7 +269,7 @@ def train_nn(episode_size, hidden_size, l_rate, show_step, model_path):
     st = time.time()
 
     with tf.Session() as sess:
-        nn = NN(sess, env.input_size, hidden_size, l_rate, OUTPUT_SIZE)
+        nn = NN(sess, INPUT_SIZE, hidden_size, l_rate, OUTPUT_SIZE)
         tf.global_variables_initializer().run()
 
         state = env.reset()
@@ -283,6 +284,7 @@ def train_nn(episode_size, hidden_size, l_rate, show_step, model_path):
             if eidx % show_step == 0:
                 print("Episode {}, Cross entropy {:.2f}, Y {}, logits {}, "
                       "action {}".format(eidx, cross_entropy, Y, logits, a))
+
             # if reward == 1:
             #    print("Episode {} Hit".format(eidx))
             if eidx % 100 == 0:

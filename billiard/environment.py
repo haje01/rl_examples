@@ -3,6 +3,7 @@ from gym import spaces
 
 import rendering as rnd
 
+INPUT_SIZE = rnd.OBS_WIDTH * rnd.OBS_HEIGHT * rnd.OBS_DEPTH
 OUTPUT_SIZE = rnd.DIV_OF_CIRCLE
 
 
@@ -24,10 +25,6 @@ class BilliardEnv(gym.Env):
                                             shape=(rnd.OBS_HEIGHT,
                                                    rnd.OBS_WIDTH, 4))
         self.viewer = None
-
-    @property
-    def input_size(self):
-        return len(self.viewer.balls) * 2
 
     def _get_obs(self):
         return self.viewer._get_obs()
