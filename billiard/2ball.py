@@ -35,8 +35,8 @@ class TwoBallEnv(BilliardEnv):
         # print("  _step")
         hit_list, obs = self.viewer.shot_and_get_result(action)
         reward = 1 if len(hit_list) > 0 else 0
-        if reward == 1:
-            print("action {}, hit".format(action))
+        # if reward == 1:
+        #    print("action {}, hit".format(action))
         done = True
         return obs, reward, done, {}
 
@@ -193,14 +193,16 @@ def nn_bot_play(model_path, hidden_size, play_cnt):
 @click.option('--showstep', 'show_step', default=20, show_default=True,
               help="Step for display learning status.")
 @click.option('--gamma', default=0.9, show_default=True, help='Gamma for TD.')
-@click.option('--replay', 'replay_size', default=10000, show_default=True,
+@click.option('--repbuf', 'replay_size', default=10000, show_default=True,
               help="Replay buffer size.")
+@click.option('--repcnt', 'replay_cnt', default=50, show_default=True,
+              help="Model save path.")
 @click.option('--minibatch', 'minibatch_size', default=10, show_default=True,
               help="Minibatch size.")
 @click.option('--modelpath', 'model_path', default="saved/2ball_dqn_model",
               show_default=True, help="Model save path.")
 def train_dqn(episode_size, hidden_size, show_step, gamma, replay_size,
-              minibatch_size, model_path):
+              replay_cnt, minibatch_size, model_path):
     env = TwoBallEnv()
     env.query_viewer()
     replay_buffer = deque()
@@ -237,7 +239,7 @@ def train_dqn(episode_size, hidden_size, show_step, gamma, replay_size,
             state = next_state
 
             if eidx % show_step == 0 and len(replay_buffer) > minibatch_size:
-                for _ in range(50):
+                for _ in range(replay_cnt):
                     minibatch = random.sample(replay_buffer, minibatch_size)
                     loss, _ = simple_replay_train(mainDQN, minibatch, gamma)
                 print("Episode {} EPS {} ReplayBuffer {} Loss: {}".
