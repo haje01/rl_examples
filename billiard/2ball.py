@@ -165,7 +165,6 @@ def nn_bot_play(model_path, play_cnt):
     env = TwoBallEnv()
     env.query_viewer()
     s = env.reset()
-    env.viewer.store_balls()
 
     with tf.Session() as sess:
         nn = NN.create_from_model_info(sess, model_path + '.json')
@@ -185,7 +184,6 @@ def nn_bot_play(model_path, play_cnt):
                 if env.viewer.move_end():
                     break
 
-            env.viewer.restore_balls()
 
 @train.command('dqn')
 @click.option('--episode', 'episode_size', default=10000, show_default=True,
