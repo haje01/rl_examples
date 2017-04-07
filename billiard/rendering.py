@@ -334,7 +334,7 @@ class Viewer:
         return arr
 
     def _get_obs(self):
-        return self._get_image()
+        return self.render(True)
 
     def save_image(self, fname):
         arr = self._get_image()

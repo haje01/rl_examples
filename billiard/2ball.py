@@ -2,7 +2,6 @@ import time
 import random
 from collections import deque
 
-import scipy
 import click
 import numpy as np
 import tensorflow as tf
@@ -165,16 +164,18 @@ def test_nn(model_info_path, hidden_size, test_cnt):
 def nn_bot_play(model_path, play_cnt):
     env = TwoBallEnv()
     env.query_viewer()
-    env.reset()
+    s = env.reset()
+    env.viewer.store_balls()
 
     with tf.Session() as sess:
         nn = NN.create_from_model_info(sess, model_path + '.json')
         for i in range(play_cnt):
             # shot
             s = env._get_obs()
+
             prob = nn.predict(s)
             a = np.argmax(prob)
-            print("state {}, prob {}, action {}".format(s, prob, a))
+            print("prob {}, action {}".format(prob, a))
             env.viewer.shot((a, DEFAULT_FORCE))
 
             # wait
@@ -184,6 +185,7 @@ def nn_bot_play(model_path, play_cnt):
                 if env.viewer.move_end():
                     break
 
+            env.viewer.restore_balls()
 
 @train.command('dqn')
 @click.option('--episode', 'episode_size', default=10000, show_default=True,
@@ -268,6 +270,7 @@ def train_nn(episode_size, hidden_size, l_rate, show_step, model_path):
     env.query_viewer()
     st = time.time()
 
+    # fw = open('progress.txt', 'w')
     with tf.Session() as sess:
         nn = NN(sess, INPUT_SIZE, hidden_size, l_rate, OUTPUT_SIZE)
         tf.global_variables_initializer().run()
@@ -284,6 +287,7 @@ def train_nn(episode_size, hidden_size, l_rate, show_step, model_path):
             if eidx % show_step == 0:
                 print("Episode {}, Cross entropy {:.2f}, Y {}, logits {}, "
                       "action {}".format(eidx, cross_entropy, Y, logits, a))
+                # fw.write("{:2.f}\n".format(cross_entropy))
 
             # if reward == 1:
             #    print("Episode {} Hit".format(eidx))
@@ -291,6 +295,8 @@ def train_nn(episode_size, hidden_size, l_rate, show_step, model_path):
                 nn.save(model_path)
 
         nn.save(model_path)
+
+    # fw.close()
 
     print("Train finished in {:.2f} sec".format(time.time() - st))
 
