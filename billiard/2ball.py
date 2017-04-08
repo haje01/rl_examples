@@ -1,3 +1,4 @@
+import json
 import time
 import random
 from collections import deque
@@ -22,11 +23,17 @@ BALL_COLOR = [
     (1, 0, 0),  # Red
 ]
 BALL_POS = [
-    (150, 200),  # Cue
+    (150, 202),  # Cue
     (550, 200),  # Red
 ]
+MINSET_BALL_POS = [
+    (200, 300),  # 0
+    (500, 300),  # 1
+    (500, 100),  # 2
+    (200, 100),  # 3
+]
 
-DEFAULT_FORCE = 2
+DEFAULT_FORCE = 2.5
 
 
 class TwoBallEnv(BilliardEnv):
@@ -35,10 +42,12 @@ class TwoBallEnv(BilliardEnv):
 
     def _step(self, action):
         # print("  _step")
-        hit_list, obs = self.viewer.shot_and_get_result(action)
-        reward = 1 if len(hit_list) > 0 else 0
-        # if reward == 1:
-        #    print("action {}, hit".format(action))
+        # st = time.time()
+        hit_list, obs, fcnt = self.viewer.shot_and_get_result(action)
+        # print("shot_and_get_result elapsed {:.2f}".format(time.time() - st))
+        reward = 100.0 / fcnt if len(hit_list) > 0 else 0
+        # if reward > 0:
+        #    print("action {}, fcnt {}".format(action, fcnt))
         done = True
         return obs, reward, done, {}
 
@@ -54,28 +63,28 @@ class TwoBallEnv(BilliardEnv):
                 return action
 
     def all_good_shots(self):
-        all_shots = [0] * rnd.DIV_OF_CIRCLE
+        shots = [0] * rnd.DIV_OF_CIRCLE
         self.viewer.store_balls()
         for a in range(rnd.DIV_OF_CIRCLE):
             obs, reward, done, _ = self._step((a, DEFAULT_FORCE))
             self.viewer.restore_balls()
-            if reward == 1:
-                all_shots[a] = 1
-        s = sum(all_shots)
-        if s == 0:
-            return np.array([1/rnd.DIV_OF_CIRCLE] * rnd.DIV_OF_CIRCLE)
-        return np.array(all_shots) / s
+            if reward > 0:
+                shots[a] = 1
+        return np.array(shots)
 
-    def first_good_shot(self):
-        all_shots = [0] * rnd.DIV_OF_CIRCLE
+    def best_shot(self):
+        action = None
+        best_reward = 0
         self.viewer.store_balls()
         for a in range(rnd.DIV_OF_CIRCLE):
             obs, reward, done, _ = self._step((a, DEFAULT_FORCE))
             self.viewer.restore_balls()
-            if reward == 1:
-                all_shots[a] = 1
-                return all_shots
-        return all_shots
+            # if reward > 0:
+            #    print("action {} reward {}".format(reward, a))
+            if reward > best_reward:
+                action = a
+                best_reward = reward
+        return action
 
 
 @click.group()
@@ -106,6 +115,91 @@ def shottest():
 @cli.group(help="Human play with bot.")
 def play(playcnt):
     pass
+
+
+@cli.command("genshot", help="Generate shot data.")
+@click.argument('data_path')
+@click.option('--shotcnt', 'shot_cnt', show_default=True, default=10000,
+              help="Generate shot data of this count.")
+@click.option('--minset', 'minset', is_flag=True, default=False,
+              show_default=True, help="Use minimal learning set for"
+              "verification.")
+@click.option('--visible', 'visible', is_flag=True, default=False,
+              show_default=True, help="Visible shot process.")
+@click.option('--showstep', 'show_step', default=20, show_default=True,
+              help="Step for display shot status.")
+@click.option('--imgstate', 'img_state', is_flag=True, default=False,
+              show_default=True, help="Save state image before shot.")
+def gen_shot_data(data_path, shot_cnt, minset, visible, show_step, img_state):
+    env = TwoBallEnv()
+    env.query_viewer()
+    state = env.reset()
+    st = time.time()
+
+    with open(data_path, 'wb') as f:
+        states = []
+        actions = []
+        for pi in range(shot_cnt):
+            if minset:
+                state = minset_rotate(env, pi)
+
+            if img_state:
+                rnd.save_encoded_image("genshot_{}.png".format(pi), state)
+
+            a = env.best_shot()
+            if pi % show_step == 0:
+                print("Episode {} action {}".format(pi, a))
+
+            if visible:
+                env.viewer.shot((a, DEFAULT_FORCE))
+                while True:
+                    env._render()
+                    if env.viewer.move_end():
+                        break
+                state = env._get_obs()
+                time.sleep(0.5)
+            else:
+                state, reward, done, _ = env.step((a, DEFAULT_FORCE))
+
+            states.append(state)
+            actions.append(a)
+
+        np.savez(f, shot_cnt=shot_cnt, reset_cnt=reset_cnt, minset=minset,
+                 states=states, actions=actions)
+        elapsed = time.time() - st
+        print("Saved {} shot data '{}' in {:.2f} sec.".format(shot_cnt,
+                                                              data_path,
+                                                              elapsed))
+
+
+@cli.command("descshot", help="Describe shot data.")
+@click.argument('data_path')
+@click.option('--action', 'show_action', is_flag=True, default=False,
+              show_default=True, help="Show actions")
+def play_shot_data(data_path, show_action):
+    with open(data_path, 'rb') as f:
+        data = np.load(f)
+        print("shot_cnt {}, reset_cnt {}, minset "
+              "{}".format(data['shot_cnt'], data['reset_cnt'],
+                          data['minset']))
+
+        if show_action:
+            actions = data['actions']
+            for i in range(data['shot_cnt']):
+                a = actions[i]
+                print("  episode {} action {}".format(i, a))
+
+
+def minset_rotate(env, pi):
+    if pi % 4 == 0:
+        state = env.reset_balls(MINSET_BALL_POS[:2])
+    elif pi % 4 == 1:
+        state = env.reset_balls(MINSET_BALL_POS[1:3])
+    elif pi % 4 == 2:
+        state = env.reset_balls(MINSET_BALL_POS[2:])
+    else:
+        state = env.reset_balls([MINSET_BALL_POS[3], MINSET_BALL_POS[0]])
+    return state
 
 
 @botplay.command('dqn')
@@ -148,7 +242,8 @@ def test_nn(model_info_path, hidden_size, test_cnt):
         for i in range(test_cnt):
             prob = nn.predict(s)
             a = np.random.choice(np.nonzero(prob == prob.max())[0])
-            hit_list, s = env.viewer.shot_and_get_result((a, DEFAULT_FORCE))
+            hit_list, s, fcnt = env.viewer.shot_and_get_result((a,
+                                                                DEFAULT_FORCE))
             reward = 1 if len(hit_list) > 0 else 0
             if i % 100 == 0:
                 print("episode {} action {} reward {}".format(i, a, reward))
@@ -161,7 +256,9 @@ def test_nn(model_info_path, hidden_size, test_cnt):
 @click.argument('model_path')
 @click.option('--playcnt', 'play_cnt', default=100, show_default=True,
               help="Play episode count.")
-def nn_bot_play(model_path, play_cnt):
+@click.option('--imgstate', 'img_state', is_flag=True, default=False,
+              show_default=True, help="Save state image before shot.")
+def nn_bot_play(model_path, play_cnt, img_state):
     env = TwoBallEnv()
     env.query_viewer()
     s = env.reset()
@@ -169,12 +266,24 @@ def nn_bot_play(model_path, play_cnt):
     with tf.Session() as sess:
         nn = NN.create_from_model_info(sess, model_path + '.json')
         for i in range(play_cnt):
+            if nn.minset:
+                s = minset_rotate(env, i)
             # shot
             s = env._get_obs()
+            if img_state:
+                rnd.save_encoded_image("botplay_{}.png".format(i), s)
 
             prob = nn.predict(s)
-            a = np.argmax(prob)
-            print("prob {}, action {}".format(prob, a))
+            if not nn.multi_shot:
+                fa = prob[0][0]
+                a = np.rint(fa)
+                print("prob {}, fa {} a {}".format(prob, fa, a))
+            else:
+                pc = np.percentile(prob, 95)
+                a = np.random.choice(np.nonzero(prob[0] >= pc)[0])
+                a %= rnd.DIV_OF_CIRCLE
+                print("prob {}, a {}".format(prob, a))
+
             env.viewer.shot((a, DEFAULT_FORCE))
 
             # wait
@@ -255,37 +364,61 @@ def train_dqn(episode_size, hidden_size, l_rate, show_step, gamma, replay_size,
 @train.command('nn')
 @click.option('--episode', 'episode_size', default=10000, show_default=True,
               help="Learning episode number.")
+@click.option('--minset', 'minset', is_flag=True, default=False,
+              show_default=True, help="Use minimal learning set for"
+              "verification.")
 @click.option('--hidden', 'hidden_size', default=100, show_default=True,
               help="Hidden layer size.")
 @click.option('--lrate', 'l_rate', default=0.1, show_default=True,
               help="Learning rate.")
+@click.option('--multishot', 'multi_shot', is_flag=True,
+              help="Enable multi shot learning.")
 @click.option('--showstep', 'show_step', default=20, show_default=True,
               help="Step for display learning status.")
+@click.option('--imgstate', 'img_state', is_flag=True, default=False,
+              show_default=True, help="Save state as image before shot.")
 @click.option('--modelpath', 'model_path', default="saved/2ball_nn_model",
               show_default=True, help="Model save path.")
-def train_nn(episode_size, hidden_size, l_rate, show_step, model_path):
+def train_nn(episode_size, minset, hidden_size, l_rate, multi_shot, show_step,
+             img_state, model_path):
     env = TwoBallEnv()
     env.query_viewer()
     st = time.time()
 
     # fw = open('progress.txt', 'w')
     with tf.Session() as sess:
-        nn = NN(sess, INPUT_SIZE, hidden_size, l_rate, OUTPUT_SIZE)
+        output_size = rnd.DIV_OF_CIRCLE if multi_shot else 1
+        nn = NN(sess, INPUT_SIZE, minset, hidden_size, l_rate, multi_shot,
+                output_size)
         tf.global_variables_initializer().run()
 
         state = env.reset()
-
         for eidx in range(episode_size):
-            y = [env.all_good_shots()]
-            summary, cross_entropy, Y, logits, train = nn.update(state, y)
-            y = np.array(y[0])
-            a = np.random.choice(np.nonzero(y == y.max())[0])
+            if minset:
+                state = minset_rotate(env, eidx)
+            if img_state:
+                rnd.save_encoded_image('train_{}.png'.format(eidx), state)
+
+            if not multi_shot:
+                y = [[env.best_shot()]]
+                a = y[0][0]
+            else:
+                y = env.all_good_shots()
+                a = np.random.choice(np.nonzero(y == y.max())[0])
+                y = [env.all_good_shots()]
+
+            summary, loss, Y, logits, train = nn.update(state, y)
             state, reward, done, _ = env.step((a, DEFAULT_FORCE))
             nn.train_writer.add_summary(summary, eidx)
             if eidx % show_step == 0:
-                print("Episode {}, Cross entropy {:.2f}, Y {}, logits {}, "
-                      "action {}".format(eidx, cross_entropy, Y, logits, a))
-                # fw.write("{:2.f}\n".format(cross_entropy))
+                if nn.multi_shot:
+                    print("Episode {}, loss {:.2f}, \nY {}, \nlogits {}, "
+                          "action {}".format(eidx, loss, Y.reshape(12, 5),
+                                             logits.reshape(12, 5), a))
+                else:
+                    print("Episode {}, loss {:.2f}, \nY {}, \nlogits {}, "
+                          "action {}".format(eidx, loss, Y, logits, a))
+                # fw.write("{:2.f}\n".format(loss))
 
             # if reward == 1:
             #    print("Episode {} Hit".format(eidx))
@@ -309,7 +442,7 @@ def test_shot_1():
         env._render()
         if not shot:
             # env.viewer.random_shot()
-            env.viewer.shot(15, 10)
+            env.viewer.shot((11, DEFAULT_FORCE))
             shot = True
         if env.viewer.move_end():
             print(env.viewer.hit_list)

@@ -26,7 +26,9 @@ DIV_OF_CIRCLE = 60
 DIV_OF_FORCE = 10
 ACTION_DEGREE = CIRCLE_DEGREE / DIV_OF_CIRCLE
 OBS_WIDTH = math.ceil(WIN_WIDTH / GET_IMAGE_SKIP)
+OBS_WOFF = 10
 OBS_HEIGHT = math.ceil(WIN_HEIGHT / GET_IMAGE_SKIP)
+OBS_HOFF = 10
 OBS_DEPTH = 3
 NUM_BALL = 5
 BALL_NAME = [
@@ -51,6 +53,16 @@ BALL_POS = [
     (600, 300),  # Blue
     (600, 100),  # Green
 ]
+
+RGB_TO_BYTE = {
+    (  0, 102,   0): 0,  # Slate
+    (153,  76,  25): 1,  # Wall
+    (255, 255, 255): 2,  # White
+    (255,   0,   0): 3,  # Red
+}
+
+BYTE_TO_RGB = {c:rgb for rgb, c in RGB_TO_BYTE.items()}
+
 NO_COL_DIST = 2
 MAX_COL_REPEL = 30
 CON_HIT_LIMIT = 1
@@ -238,6 +250,12 @@ class Viewer:
             ball = Ball(name, i, pos, color)
             self.balls.append(ball)
 
+    def reset_balls(self, ball_poss):
+        assert len(ball_poss) == len(self.balls)
+        for i, ball in enumerate(self.balls):
+            ball.pos = ball_poss[i]
+            ball.reset_vel()
+
     def on_mouse_press(self, x, y, button, modifiers):
         if button == mouse.LEFT:
             self.random_shot()
@@ -329,9 +347,14 @@ class Viewer:
         buffer = pyglet.image.get_buffer_manager().get_color_buffer()
         image_data = buffer.get_image_data()
         arr = np.fromstring(image_data.data, dtype=np.uint8, sep='')
+
+        # preprocessing
         arr = arr.reshape(WIN_HEIGHT, WIN_WIDTH, 4)
-        arr = arr[::GET_IMAGE_SKIP, ::GET_IMAGE_SKIP, 0:3]
-        return arr
+        arr = arr[::GET_IMAGE_SKIP, ::GET_IMAGE_SKIP, 0:3]  # downsample
+        arr = arr[5:-5, 5:-5]
+        arr = arr[::-1]
+        # encode color
+        return encode_rgb(arr)
 
     def _get_obs(self):
         return self.render(True)
@@ -342,12 +365,14 @@ class Viewer:
 
     def shot_and_get_result(self, action):
         self.shot(action)
+        fcnt = 0
         while True:
             self.frame_move()
+            fcnt += 1
             if self.move_end():
                 break
         self.render(True)
-        return self.hit_list[:], self._get_obs()
+        return self.hit_list[:], self._get_obs(), fcnt
 
     def store_balls(self):
         self.balls_store = {}
@@ -358,6 +383,28 @@ class Viewer:
         for ball in self.balls:
             ball.pos = self.balls_store[ball]
             ball.reset_vel()
+
+
+def encode_rgb(arr):
+    narr = np.empty([arr.shape[0], arr.shape[1]])
+    for rgb, c in RGB_TO_BYTE.items():
+        match = np.equal(arr, rgb).all(2)
+        narr[match] = c
+    return narr
+
+
+def decode_rgb(arr):
+    narr = np.empty([arr.shape[0], arr.shape[1], 3])
+    for c, rgb in BYTE_TO_RGB.items():
+        match = np.equal(arr, c)
+        narr[match] = rgb
+    return narr
+
+
+def save_encoded_image(fname, arr):
+    s = decode_rgb(arr)
+    scipy.misc.imsave(fname, s.reshape(s.shape[0], s.shape[1], OBS_DEPTH))
+
 
 if __name__ == "__main__":
     viewer = Viewer(BALL_NAME, BALL_COLOR, BALL_POS)
