@@ -3,8 +3,6 @@ import json
 import numpy as np
 import tensorflow as tf
 
-import rendering as rnd
-
 
 class Network:
     def __init__(self):
@@ -16,11 +14,12 @@ class Network:
     def _get_model_info(self):
         raise NotImplemented()
 
-    def save(self, path):
+    def save(self, path, minset):
         # save model info
         with open(path + '.json', 'w') as f:
-            info = json.dumps(self._get_model_info())
-            f.write(info)
+            info = self._get_model_info()
+            info['minset'] = minset
+            f.write(json.dumps(info))
 
         # save model
         save_path = self.saver.save(self.session, path)
@@ -40,18 +39,17 @@ class NN(Network):
         with open(info_path, 'r') as f:
             data = f.read()
         info = json.loads(data)
-        nn = NN(session, info['input_size'], info['minset'], info['h_size'],
-                info['l_rate'], info['multi_shot'], info['output_size'])
+        nn = NN(session, info['input_size'], info['h_size'], info['l_rate'],
+                info['multi_shot'], info['output_size'])
         nn.load(model_path)
-        return nn
+        return nn, info
 
-    def __init__(self, session, input_size, minset, h_size, l_rate, multi_shot,
+    def __init__(self, session, input_size, h_size, l_rate, multi_shot,
                  output_size, name="main"):
         super(NN, self).__init__()
 
         self.session = session
         self.input_size = input_size
-        self.minset = minset
         self.h_size = h_size
         self.output_size = output_size
         self.l_rate = l_rate
@@ -61,9 +59,9 @@ class NN(Network):
         self._build_network(l_rate)
 
     def _get_model_info(self):
-        data = dict(input_size=self.input_size, minset=self.minset,
-                    h_size=self.h_size, l_rate=self.l_rate,
-                    multi_shot=self.multi_shot, output_size=self.output_size)
+        data = dict(input_size=self.input_size, h_size=self.h_size,
+                    l_rate=self.l_rate, multi_shot=self.multi_shot,
+                    output_size=self.output_size)
         return data
 
     def _build_network(self, l_rate):
@@ -138,7 +136,7 @@ class DQN:
         dqn = DQN(session, info['input_size'], info['h_size'], info['l_rate'],
                   info['output_size'])
         dqn.load(model_path)
-        return dqn
+        return dqn, info
 
     def __init__(self, session, input_size, h_size, l_rate, output_size,
                  name="main"):

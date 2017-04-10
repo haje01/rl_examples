@@ -118,7 +118,7 @@ def play(playcnt):
 
 
 @cli.command("genshot", help="Generate shot data.")
-@click.argument('data_path')
+@click.argument('shot_path')
 @click.option('--shotcnt', 'shot_cnt', show_default=True, default=10000,
               help="Generate shot data of this count.")
 @click.option('--minset', 'minset', is_flag=True, default=False,
@@ -130,64 +130,85 @@ def play(playcnt):
               help="Step for display shot status.")
 @click.option('--imgstate', 'img_state', is_flag=True, default=False,
               show_default=True, help="Save state image before shot.")
-def gen_shot_data(data_path, shot_cnt, minset, visible, show_step, img_state):
+def gen_shot_data(shot_path, shot_cnt, minset, visible, show_step, img_state):
     env = TwoBallEnv()
     env.query_viewer()
     state = env.reset()
     st = time.time()
 
-    with open(data_path, 'wb') as f:
-        states = []
-        actions = []
-        for pi in range(shot_cnt):
-            if minset:
-                state = minset_rotate(env, pi)
+    states = []
+    ball_poss = []
+    actions = []
+    for pi in range(shot_cnt):
+        if minset:
+            state = minset_rotate(env, pi)
 
-            if img_state:
-                rnd.save_encoded_image("genshot_{}.png".format(pi), state)
+        states.append(state)
+        if img_state:
+            rnd.save_encoded_image("genshot_{}.png".format(pi), state)
 
-            a = env.best_shot()
-            if pi % show_step == 0:
-                print("Episode {} action {}".format(pi, a))
+        ball_pos = [ball.pos for ball in env.viewer.balls]
+        ball_poss.append(ball_pos)
 
-            if visible:
-                env.viewer.shot((a, DEFAULT_FORCE))
-                while True:
-                    env._render()
-                    if env.viewer.move_end():
-                        break
-                state = env._get_obs()
-                time.sleep(0.5)
-            else:
-                state, reward, done, _ = env.step((a, DEFAULT_FORCE))
+        # TODO: save every good shots and learn from it?
+        # TODO: select n-th order to learn, and save as n-th learn.
+        a = env.best_shot()
+        if pi % show_step == 0:
+            print("Episode {} action {}".format(pi, a))
 
-            states.append(state)
-            actions.append(a)
+        if visible:
+            env.viewer.shot((a, DEFAULT_FORCE))
+            while True:
+                env._render()
+                if env.viewer.move_end():
+                    break
+            time.sleep(0.5)
+        else:
+            state, reward, done, _ = env.step((a, DEFAULT_FORCE))
 
-        np.savez(f, shot_cnt=shot_cnt, reset_cnt=reset_cnt, minset=minset,
+        actions.append(a)
+
+    info_path = "{}.json".format(shot_path)
+    with open(info_path, 'wt') as w:
+        info = dict(shot_cnt=shot_cnt, minset=minset)
+        w.write(json.dumps(info))
+
+    npy_path = '{}.npy'.format(shot_path)
+    with open(npy_path, 'wb') as f:
+        np.savez(f, shot_cnt=shot_cnt, minset=minset, ball_poss=ball_poss,
                  states=states, actions=actions)
         elapsed = time.time() - st
-        print("Saved {} shot data '{}' in {:.2f} sec.".format(shot_cnt,
-                                                              data_path,
-                                                              elapsed))
+
+    print("Saved {} shot data '{}' in {:.2f} sec.".format(shot_cnt, shot_path,
+                                                          elapsed))
 
 
-@cli.command("descshot", help="Describe shot data.")
-@click.argument('data_path')
-@click.option('--action', 'show_action', is_flag=True, default=False,
-              show_default=True, help="Show actions")
-def play_shot_data(data_path, show_action):
-    with open(data_path, 'rb') as f:
+@cli.command("playshot", help="Play shot data.")
+@click.argument('shot_path')
+@click.option('--visible', 'visible', is_flag=True, default=False,
+              show_default=True, help="Visible shot process.")
+def play_shot_data(shot_path, visible):
+    with open(shot_path, 'rb') as f:
         data = np.load(f)
-        print("shot_cnt {}, reset_cnt {}, minset "
-              "{}".format(data['shot_cnt'], data['reset_cnt'],
-                          data['minset']))
+        print("shot_cnt {}, minset {}".format(data['shot_cnt'],
+                                              data['minset']))
 
-        if show_action:
-            actions = data['actions']
-            for i in range(data['shot_cnt']):
+        shot_cnt = data['shot_cnt']
+        ball_poss = data['ball_poss']
+        actions = data['actions']
+        if visible:
+            env = TwoBallEnv()
+            env.query_viewer()
+            env.reset()
+            for i in range(shot_cnt):
+                ball_pos = ball_poss[i]
                 a = actions[i]
-                print("  episode {} action {}".format(i, a))
+                env.reset_balls(ball_pos)
+                env.viewer.shot((a, DEFAULT_FORCE))
+
+                while not env.viewer.move_end():
+                    env._render()
+                time.sleep(0.5)
 
 
 def minset_rotate(env, pi):
@@ -214,7 +235,7 @@ def dqn_bot_play(model_path, hidden_size, l_rate, play_cnt):
     env.reset()
 
     with tf.Session() as sess:
-        dqn = DQN.create_from_model_info(sess, model_path + '.json')
+        dqn, info = DQN.create_from_model_info(sess, model_path + '.json')
 
         for i in range(play_cnt):
             env._render()
@@ -264,9 +285,9 @@ def nn_bot_play(model_path, play_cnt, img_state):
     s = env.reset()
 
     with tf.Session() as sess:
-        nn = NN.create_from_model_info(sess, model_path + '.json')
+        nn, info = NN.create_from_model_info(sess, model_path + '.json')
         for i in range(play_cnt):
-            if nn.minset:
+            if info['minset']:
                 s = minset_rotate(env, i)
             # shot
             s = env._get_obs()
@@ -276,7 +297,7 @@ def nn_bot_play(model_path, play_cnt, img_state):
             prob = nn.predict(s)
             if not nn.multi_shot:
                 fa = prob[0][0]
-                a = np.rint(fa)
+                a = np.rint(fa) % rnd.DIV_OF_CIRCLE
                 print("prob {}, fa {} a {}".format(prob, fa, a))
             else:
                 pc = np.percentile(prob, 95)
@@ -299,7 +320,7 @@ def nn_bot_play(model_path, play_cnt, img_state):
               help="Learning episode number.")
 @click.option('--hidden', 'hidden_size', default=100, show_default=True,
               help="Hidden layer size.")
-@click.option('--lrate', 'l_rate', default=0.1, show_default=True,
+@click.option('--lrate', 'l_rate', default=0.01, show_default=True,
               help="Learning rate.")
 @click.option('--showstep', 'show_step', default=20, show_default=True,
               help="Step for display learning status.")
@@ -310,7 +331,7 @@ def nn_bot_play(model_path, play_cnt, img_state):
               help="Model save path.")
 @click.option('--minibatch', 'minibatch_size', default=10, show_default=True,
               help="Minibatch size.")
-@click.option('--modelpath', 'model_path', default="saved/2ball_dqn_model",
+@click.option('--modelpath', 'model_path', default="models/2ball_dqn_model",
               show_default=True, help="Model save path.")
 def train_dqn(episode_size, hidden_size, l_rate, show_step, gamma, replay_size,
               replay_cnt, minibatch_size, model_path):
@@ -362,14 +383,14 @@ def train_dqn(episode_size, hidden_size, l_rate, show_step, gamma, replay_size,
 
 
 @train.command('nn')
+@click.argument('shot_path')
 @click.option('--episode', 'episode_size', default=10000, show_default=True,
               help="Learning episode number.")
-@click.option('--minset', 'minset', is_flag=True, default=False,
-              show_default=True, help="Use minimal learning set for"
-              "verification.")
+@click.option('--minibatch', 'minibatch_size', default=20, show_default=True,
+              help="Learning minibatch size.")
 @click.option('--hidden', 'hidden_size', default=100, show_default=True,
               help="Hidden layer size.")
-@click.option('--lrate', 'l_rate', default=0.1, show_default=True,
+@click.option('--lrate', 'l_rate', default=0.01, show_default=True,
               help="Learning rate.")
 @click.option('--multishot', 'multi_shot', is_flag=True,
               help="Enable multi shot learning.")
@@ -377,55 +398,57 @@ def train_dqn(episode_size, hidden_size, l_rate, show_step, gamma, replay_size,
               help="Step for display learning status.")
 @click.option('--imgstate', 'img_state', is_flag=True, default=False,
               show_default=True, help="Save state as image before shot.")
-@click.option('--modelpath', 'model_path', default="saved/2ball_nn_model",
+@click.option('--modelpath', 'model_path', default="models/2ball_nn_model",
               show_default=True, help="Model save path.")
-def train_nn(episode_size, minset, hidden_size, l_rate, multi_shot, show_step,
-             img_state, model_path):
+def train_nn(shot_path, episode_size, minibatch_size, hidden_size, l_rate,
+             multi_shot, show_step, img_state, model_path):
     env = TwoBallEnv()
     env.query_viewer()
+    env.reset()
     st = time.time()
 
     # fw = open('progress.txt', 'w')
     with tf.Session() as sess:
         output_size = rnd.DIV_OF_CIRCLE if multi_shot else 1
-        nn = NN(sess, INPUT_SIZE, minset, hidden_size, l_rate, multi_shot,
+
+        info_path = '{}.json'.format(shot_path)
+        npy_path = '{}.npy'.format(shot_path)
+        with open(info_path, 'rt') as f:
+            info = json.loads(f.read())
+            shot_cnt = info['shot_cnt']
+            minset = info['minset']
+
+        with open(npy_path, 'rb') as f:
+            data = np.load(f)
+            states = data['states']
+            actions = data['actions']
+
+        nn = NN(sess, INPUT_SIZE, hidden_size, l_rate, multi_shot,
                 output_size)
         tf.global_variables_initializer().run()
 
-        state = env.reset()
         for eidx in range(episode_size):
-            if minset:
-                state = minset_rotate(env, eidx)
-            if img_state:
-                rnd.save_encoded_image('train_{}.png'.format(eidx), state)
+            selected = np.random.randint(0, shot_cnt, minibatch_size)
+            minibatch = states[selected]
+            # rnd.save_encoded_image("train_{}.png".format(eidx), states[0])
 
-            if not multi_shot:
-                y = [[env.best_shot()]]
-                a = y[0][0]
-            else:
-                y = env.all_good_shots()
-                a = np.random.choice(np.nonzero(y == y.max())[0])
-                y = [env.all_good_shots()]
+            for i, state in enumerate(minibatch):
+                y = [[actions[selected[i]]]]
+                summary, loss, Y, logits, train = nn.update(state, y)
+                # state, reward, done, _ = env.step((a, DEFAULT_FORCE))
 
-            summary, loss, Y, logits, train = nn.update(state, y)
-            state, reward, done, _ = env.step((a, DEFAULT_FORCE))
-            nn.train_writer.add_summary(summary, eidx)
             if eidx % show_step == 0:
+                nn.train_writer.add_summary(summary, eidx)
                 if nn.multi_shot:
-                    print("Episode {}, loss {:.2f}, \nY {}, \nlogits {}, "
+                    print("== Episode {}, loss {:.2f}, \nY {}, \nlogits {}, "
                           "action {}".format(eidx, loss, Y.reshape(12, 5),
-                                             logits.reshape(12, 5), a))
+                                             logits.reshape(12, 5), y))
                 else:
-                    print("Episode {}, loss {:.2f}, \nY {}, \nlogits {}, "
-                          "action {}".format(eidx, loss, Y, logits, a))
+                    print("== Episode {}, loss {:.2f}, \nY {}, \nlogits {}, "
+                          "action {}".format(eidx, loss, Y, logits, y))
                 # fw.write("{:2.f}\n".format(loss))
 
-            # if reward == 1:
-            #    print("Episode {} Hit".format(eidx))
-            if eidx % 100 == 0:
-                nn.save(model_path)
-
-        nn.save(model_path)
+        nn.save(model_path, minset=minset)
 
     # fw.close()
 
@@ -442,7 +465,7 @@ def test_shot_1():
         env._render()
         if not shot:
             # env.viewer.random_shot()
-            env.viewer.shot((11, DEFAULT_FORCE))
+            env.viewer.shot((9, DEFAULT_FORCE))
             shot = True
         if env.viewer.move_end():
             print(env.viewer.hit_list)
