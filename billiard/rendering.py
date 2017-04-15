@@ -7,7 +7,7 @@ import pyglet
 from pyglet.window import mouse
 from pyglet.gl import *  # NOQA
 
-WIN_WIDTH = 750
+WIN_WIDTH = 400  # 750
 WIN_HEIGHT = 400
 WALL_DEPTH = 30
 BALL_POINTS = 12
@@ -20,15 +20,17 @@ HIT_FRICTION_RATE = 0.7
 HIT_FRICTION_RATE2 = 0.3
 MAX_VEL = 1400
 FIX_DELTA = 0.01667
-GET_IMAGE_SKIP = 6
+GET_IMAGE_SKIP = 5 # 6
 CIRCLE_DEGREE = 360
 DIV_OF_CIRCLE = 60
 DIV_OF_FORCE = 10
 ACTION_DEGREE = CIRCLE_DEGREE / DIV_OF_CIRCLE
-OBS_WIDTH = math.ceil(WIN_WIDTH / GET_IMAGE_SKIP)
-OBS_WOFF = 10
-OBS_HEIGHT = math.ceil(WIN_HEIGHT / GET_IMAGE_SKIP)
-OBS_HOFF = 10
+OBS_WOFF = 0  # 10
+OBS_HWOFF = int(OBS_WOFF * 0.5)
+OBS_WIDTH = math.ceil(WIN_WIDTH / GET_IMAGE_SKIP) - OBS_WOFF
+OBS_HOFF = 0  # 10
+OBS_HHOFF = int(OBS_HOFF * 0.5)
+OBS_HEIGHT = math.ceil(WIN_HEIGHT / GET_IMAGE_SKIP) - OBS_HOFF
 OBS_DEPTH = 3
 NUM_BALL = 5
 BALL_NAME = [
@@ -230,7 +232,7 @@ def get_display(spec):
 
 class Viewer:
 
-    def __init__(self, ball_name, ball_color, ball_pos, display=None):
+    def __init__(self, ball_name, ball_color, ball_pos, encode_output, display=None):
         display = get_display(display)
         self.window = pyglet.window.Window(width=WIN_WIDTH, height=WIN_HEIGHT,
                                            display=display)
@@ -240,6 +242,7 @@ class Viewer:
         self.window.on_mouse_motion = self.on_mouse_motion
         self.window.on_draw = self.on_draw
         self.numball = len(ball_color)
+        self.encode_output = encode_output
         assert self.numball == len(ball_pos)
         self.balls = []
         self.hit_list = []
@@ -351,10 +354,17 @@ class Viewer:
         # preprocessing
         arr = arr.reshape(WIN_HEIGHT, WIN_WIDTH, 4)
         arr = arr[::GET_IMAGE_SKIP, ::GET_IMAGE_SKIP, 0:3]  # downsample
-        arr = arr[5:-5, 5:-5]
+        if OBS_HWOFF > 0:
+            arr = arr[OBS_HWOFF:-OBS_HWOFF, :]
+        if OBS_HHOFF > 0:
+            arr = arr[:, OBS_HHOFF:-OBS_HHOFF]
         arr = arr[::-1]
-        # encode color
-        return encode_rgb(arr)
+
+        if self.encode_output:
+            # encode color
+            return encode_rgb(arr)
+        else:
+            return arr
 
     def _get_obs(self):
         return self.render(True)
@@ -401,8 +411,11 @@ def decode_rgb(arr):
     return narr
 
 
-def save_encoded_image(fname, arr):
-    s = decode_rgb(arr)
+def save_image(fname, arr, encoded):
+    if encoded:
+        s = decode_rgb(arr)
+    else:
+        s = arr
     scipy.misc.imsave(fname, s.reshape(s.shape[0], s.shape[1], OBS_DEPTH))
 
 

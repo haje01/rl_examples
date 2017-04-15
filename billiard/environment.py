@@ -13,12 +13,13 @@ class BilliardEnv(gym.Env):
         'video.frames_per_second': 60
     }
 
-    def __init__(self, ball_names, ball_colors, ball_poss):
+    def __init__(self, ball_names, ball_colors, ball_poss, enc_output):
         degrees = spaces.Discrete(rnd.DIV_OF_CIRCLE)
         forces = spaces.Discrete(rnd.DIV_OF_FORCE)
         self.ball_names = ball_names
         self.ball_colors = ball_colors
         self.ball_poss = ball_poss
+        self.enc_output = enc_output
         # self.action_space = spaces.Tuple((degrees, forces))
         self.action_space = degrees
         self.observation_space = spaces.Box(low=0, high=255,
@@ -56,5 +57,5 @@ class BilliardEnv(gym.Env):
     def query_viewer(self):
         if self.viewer is None:
             self.viewer = rnd.Viewer(self.ball_names, self.ball_colors,
-                                     self.ball_poss)
+                                     self.ball_poss, self.enc_output)
         return self.viewer
