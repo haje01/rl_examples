@@ -1,13 +1,13 @@
 import json
 
 import numpy as np
-import scipy
 import tensorflow as tf
 
 
 class Network:
     def __init__(self):
         self.saver = None
+        self.stype = None
 
     def _build_network(self):
         self.saver = tf.train.Saver()
@@ -21,17 +21,18 @@ class Network:
         # save model info
         with open(path + '.json', 'w') as f:
             info = self._get_model_info()
+            info['model'] = self.stype
             info['minset'] = minset
             f.write(json.dumps(info))
 
         # save model
         save_path = self.saver.save(self.session, path)
-        print("NN Model saved in file: {}".format(save_path))
+        print("{} Model saved in file: {}".format(self.stype, save_path))
         return save_path
 
     def load(self, path):
         self.saver.restore(self.session, path)
-        print("NN Model loaded from file: {}".format(path))
+        print("{} Model loaded from file: {}".format(self.stype, path))
 
     def update(self, state, y):
         x = np.reshape(state, [1, self.input_size])
@@ -39,25 +40,14 @@ class Network:
                                  self._logits, self._train],
                                 feed_dict={self._X: x, self._Y: y})
 
+
 class CNN(Network):
 
-    @staticmethod
-    def create_from_model_info(session, info_path):
-        model_path = info_path.split('.')[0]
-        with open(info_path, 'r') as f:
-            data = f.read()
-        info = json.loads(data)
-        cnn = CNN(session, info['input_size'], info['o_depth'], info['k_size'],
-                 info['o_width'], info['o_height'], info['c1_fcnt'],
-                 info['c2_fcnt'], info['l_rate'], info['multi_shot'],
-                 info['output_size'])
-        cnn.load(model_path)
-        return cnn, info
-
-
     def __init__(self, session, input_size, o_depth, k_size, o_width, o_height,
-                 c1_fcnt, c2_fcnt, l_rate, multi_shot, output_size, name="main"):
+                 c1_fcnt, c2_fcnt, l_rate, multi_shot, output_size,
+                 name="main"):
         super(CNN, self).__init__()
+        self.stype = 'CNN'
 
         self.session = session
         self.input_size = input_size
@@ -136,23 +126,17 @@ class CNN(Network):
                                  self._train],
                                 feed_dict={self._X: x, self._Y: y})
 
-class FullyConnected(Network):
+    def predict(self, state):
+        x = np.reshape(state, [1, self.input_size])
+        return self.session.run(self._logits, feed_dict={self._X: x})
 
-    @staticmethod
-    def create_from_model_info(session, info_path):
-        model_path = info_path.split('.')[0]
-        with open(info_path, 'r') as f:
-            data = f.read()
-        info = json.loads(data)
-        fc = FullyConnected(session, info['input_size'], info['h_size'],
-                            info['l_rate'], info['multi_shot'],
-                            info['output_size'])
-        fc.load(model_path)
-        return fc, info
+
+class FullyConnected(Network):
 
     def __init__(self, session, input_size, h_size, l_rate, multi_shot,
                  output_size, name="main"):
         super(FullyConnected, self).__init__()
+        self.stype = 'FC'
 
         self.session = session
         self.input_size = input_size
@@ -223,17 +207,6 @@ class FullyConnected(Network):
 
 
 class DQN:
-
-    @staticmethod
-    def create_from_model_info(session, info_path):
-        model_path = info_path.split('.')[0]
-        with open(info_path, 'r') as f:
-            data = f.read()
-        info = json.loads(data)
-        dqn = DQN(session, info['input_size'], info['h_size'], info['l_rate'],
-                  info['output_size'])
-        dqn.load(model_path)
-        return dqn, info
 
     def __init__(self, session, input_size, h_size, l_rate, output_size,
                  name="main"):

@@ -46,7 +46,8 @@ def find_nearest(arr, value):
 
 class TwoBallEnv(BilliardEnv):
     def __init__(self, enc_output=True):
-        super(TwoBallEnv, self).__init__(BALL_NAME, BALL_COLOR, BALL_POS, enc_output)
+        super(TwoBallEnv, self).__init__(BALL_NAME, BALL_COLOR, BALL_POS,
+                                         enc_output)
 
     def _step(self, action):
         # print("  _step")
@@ -110,11 +111,6 @@ def test():
     pass
 
 
-@cli.group(help="Bot play from saved model.")
-def botplay():
-    pass
-
-
 @cli.group(help="Shot to test dynamics.")
 def shottest():
     pass
@@ -126,7 +122,7 @@ def play(playcnt):
 
 
 @cli.command("gendata", help="Generate shot data.")
-@click.argument('shot_path')
+@click.argument('data_path')
 @click.option('--shotcnt', 'shot_cnt', show_default=True, default=10000,
               help="Generate shot data of this count.")
 @click.option('--minset', 'minset', is_flag=True, default=False,
@@ -140,7 +136,7 @@ def play(playcnt):
               show_default=True, help="Save state image before shot.")
 @click.option('--encout', 'enc_output', is_flag=True, default=False,
               show_default=True, help="Encode rgb output to number.")
-def gen_data(shot_path, shot_cnt, minset, visible, show_step, img_state,
+def gen_data(data_path, shot_cnt, minset, visible, show_step, img_state,
              enc_output):
     env = TwoBallEnv(enc_output)
     env.query_viewer()
@@ -181,20 +177,20 @@ def gen_data(shot_path, shot_cnt, minset, visible, show_step, img_state,
 
     o_depth = 1 if enc_output else rnd.OBS_DEPTH
     input_size = INPUT_SIZE * o_depth
-    Data.save(shot_path, states, actions, ball_poss, input_size, shot_cnt,
+    save_data(data_path, states, actions, ball_poss, input_size, shot_cnt,
               minset, enc_output)
 
     elapsed = time.time() - st
-    print("Saved {} shot data '{}' in {:.2f} sec.".format(shot_cnt, shot_path,
+    print("Saved {} shot data '{}' in {:.2f} sec.".format(shot_cnt, data_path,
                                                           elapsed))
 
 
 @cli.command("playshot", help="Play shot data.")
-@click.argument('shot_path')
+@click.argument('data_path')
 @click.option('--visible', 'visible', is_flag=True, default=False,
               show_default=True, help="Visible shot process.")
-def play_shot_data(shot_path, visible):
-    with open(shot_path, 'rb') as f:
+def play_shot_data(data_path, visible):
+    with open(data_path, 'rb') as f:
         data = np.load(f)
         print("shot_cnt {}, minset {}".format(data['shot_cnt'],
                                               data['minset']))
@@ -229,26 +225,26 @@ def minset_rotate(env, pi):
     return state
 
 
-@botplay.command('dqn')
-@click.argument('model_path')
-@click.option('--hidden', 'hidden_size', default=100, show_default=True,
-              help="Hidden layer size.")
-@click.option('--playcnt', 'play_cnt', show_default=True, default=100,
-              help="Play episode count.")
-def dqn_bot_play(model_path, hidden_size, l_rate, play_cnt):
-    env = TwoBallEnv()
-    env.query_viewer()
-    env.reset()
+#@botplay.command('dqn')
+#@click.argument('model_path')
+#@click.option('--hidden', 'hidden_size', default=100, show_default=True,
+              #help="Hidden layer size.")
+#@click.option('--playcnt', 'play_cnt', show_default=True, default=100,
+              #help="Play episode count.")
+#def dqn_bot_play(model_path, hidden_size, l_rate, play_cnt):
+    #env = TwoBallEnv()
+    #env.query_viewer()
+    #env.reset()
 
-    with tf.Session() as sess:
-        dqn, info = DQN.create_from_model_info(sess, model_path + '.json')
+    #with tf.Session() as sess:
+        #dqn, info = DQN.create_from_model_info(sess, model_path + '.json')
 
-        for i in range(play_cnt):
-            env._render()
-            if env.viewer.move_end():
-                s = env._get_obs()
-                a = np.argmax(dqn.predict(s))
-                env.viewer.shot((a, DEFAULT_FORCE))
+        #for i in range(play_cnt):
+            #env._render()
+            #if env.viewer.move_end():
+                #s = env._get_obs()
+                #a = np.argmax(dqn.predict(s))
+                #env.viewer.shot((a, DEFAULT_FORCE))
 
 
 @test.command('nn')
@@ -279,20 +275,41 @@ def test_fc(model_info_path, hidden_size, test_cnt):
         print("Accuracy: {}".format(float(hit_cnt) / test_cnt))
 
 
-@botplay.command('fc')
+def load_model(sess, model_path):
+    info_path = '{}.json'.format(model_path)
+    with open(info_path, 'rt') as f:
+        info = json.loads(f.read())
+
+    model = info['model']
+    if model == 'FC':
+        net = FullyConnected(sess, info['input_size'], info['h_size'],
+                             info['l_rate'], info['multi_shot'],
+                             info['output_size'])
+    elif model == 'CNN':
+        net = CNN(sess, info['input_size'], info['o_depth'], info['k_size'],
+                  info['o_width'], info['o_height'], info['c1_fcnt'],
+                  info['c2_fcnt'], info['l_rate'], info['multi_shot'],
+                  info['output_size'])
+
+    net.load(model_path)
+    return info, net
+
+
+@cli.command("botplay", help="Bot play from saved model.")
 @click.argument('model_path')
 @click.option('--playcnt', 'play_cnt', default=100, show_default=True,
               help="Play episode count.")
 @click.option('--imgstate', 'img_state', is_flag=True, default=False,
               show_default=True, help="Save state image before shot.")
-def fc_bot_play(model_path, play_cnt, img_state):
-    env = TwoBallEnv()
+@click.option('--encout', 'enc_output', is_flag=True, default=False,
+              show_default=True, help="Encode rgb output to number.")
+def bot_play(model_path, play_cnt, img_state, enc_output):
+    env = TwoBallEnv(enc_output)
     env.query_viewer()
     s = env.reset()
 
     with tf.Session() as sess:
-        nn, info = FullyConnected.create_from_model_info(sess, model_path +
-                                                         '.json')
+        info, net = load_model(sess, model_path)
         for i in range(play_cnt):
             if info['minset']:
                 s = minset_rotate(env, i)
@@ -301,8 +318,8 @@ def fc_bot_play(model_path, play_cnt, img_state):
             if img_state:
                 rnd.save_encoded_image("botplay_{}.png".format(i), s)
 
-            prob = nn.predict(s)
-            if not nn.multi_shot:
+            prob = net.predict(s)
+            if not net.multi_shot:
                 fa = prob[0][0]
                 a = np.rint(fa) % rnd.DIV_OF_CIRCLE
                 print("shot {} prob {}, fa {} a {}".format(i+1, prob, fa, a))
@@ -338,7 +355,7 @@ def fc_bot_play(model_path, play_cnt, img_state):
               help="Model save path.")
 @click.option('--minibatch', 'minibatch_size', default=10, show_default=True,
               help="Minibatch size.")
-@click.option('--modelpath', 'model_path', default="models/2ball_dqn_model",
+@click.option('--modelpath', 'model_path', default="models/2ball_dqn",
               show_default=True, help="Model save path.")
 def train_dqn(episode_size, hidden_size, l_rate, show_step, gamma, replay_size,
               replay_cnt, minibatch_size, model_path):
@@ -390,9 +407,9 @@ def train_dqn(episode_size, hidden_size, l_rate, show_step, gamma, replay_size,
 
 
 class Data:
-    def __init__(self, shot_path, samp_rate):
-        info_path = '{}.json'.format(shot_path)
-        npy_path = '{}.npy'.format(shot_path)
+    def __init__(self, data_path, samp_rate):
+        info_path = '{}.json'.format(data_path)
+        npy_path = '{}.npy'.format(data_path)
         with open(info_path, 'rt') as f:
             info = json.loads(f.read())
             self.shot_cnt = int(info['shot_cnt'] * samp_rate)
@@ -405,21 +422,20 @@ class Data:
             self.states = data['states']
             self.actions = data['actions']
 
-    @staticmethod
-    def save(shot_path, states, actions, ball_poss, input_size, shot_cnt,
-             minset, enc_output):
-        info_path = "{}.json".format(shot_path)
-        with open(info_path, 'wt') as w:
-            o_depth = 1 if enc_output else rnd.OBS_DEPTH
-            input_size = INPUT_SIZE * o_depth
-            info = dict(shot_cnt=shot_cnt, minset=minset, input_size=input_size,
-                        o_depth=o_depth)
-            w.write(json.dumps(info))
+def save_data(data_path, states, actions, ball_poss, input_size, shot_cnt,
+              minset, enc_output):
+    info_path = "{}.json".format(data_path)
+    with open(info_path, 'wt') as w:
+        o_depth = 1 if enc_output else rnd.OBS_DEPTH
+        input_size = INPUT_SIZE * o_depth
+        info = dict(shot_cnt=shot_cnt, minset=minset, input_size=input_size,
+                    o_depth=o_depth)
+        w.write(json.dumps(info))
 
-        npy_path = '{}.npy'.format(shot_path)
-        with open(npy_path, 'wb') as f:
-            np.savez(f, shot_cnt=shot_cnt, minset=minset, ball_poss=ball_poss,
-                    states=states, actions=actions)
+    npy_path = '{}.npy'.format(data_path)
+    with open(npy_path, 'wb') as f:
+        np.savez(f, shot_cnt=shot_cnt, minset=minset, ball_poss=ball_poss,
+                states=states, actions=actions)
 
 
 class Train:
@@ -489,12 +505,14 @@ class Train:
 
 class TrainFC(Train):
     def __init__(self, net, data, minibatch_size, samp_rate):
-        super(TrainFC, self).__init__(net, data, minibatch_size, samp_rate, True)
+        super(TrainFC, self).__init__(net, data, minibatch_size, samp_rate,
+                                      True)
 
 
 class TrainCNN(Train):
     def __init__(self, net, data, minibatch_size, samp_rate, img_conv):
-        super(TrainCNN, self).__init__(net, data, minibatch_size, samp_rate, False)
+        super(TrainCNN, self).__init__(net, data, minibatch_size, samp_rate,
+                                       False)
         self.img_conv = img_conv
 
     def _update(self, state, y, eidx, midx):
@@ -525,7 +543,7 @@ class TrainCNN(Train):
 
 
 @train.command('cnn')
-@click.argument('shot_path')
+@click.argument('data_path')
 @click.option('--episode', 'episode_size', default=10000, show_default=True,
               help="Learning episode number.")
 @click.option('--minibatch', 'minibatch_size', default=20, show_default=True,
@@ -543,15 +561,15 @@ class TrainCNN(Train):
               help="Step for display learning status.")
 @click.option('--imgconv', 'img_conv', is_flag=True, default=False,
               show_default=True, help="Save convolution result as image.")
-@click.option('--modelpath', 'model_path', default="models/2ball_cnn_model",
+@click.option('--modelpath', 'model_path', default="models/2ball_cnn",
               show_default=True, help="Model save path.")
 @click.option('--stoploss', 'stop_loss', default=0.1, show_default=True,
               help="Stop train if all shot losses are below this value.")
-def train_cnn(shot_path, episode_size, minibatch_size, k_size, c1_fcnt,
+def train_cnn(data_path, episode_size, minibatch_size, k_size, c1_fcnt,
               c2_fcnt,l_rate, samp_rate, multi_shot, show_step, img_conv,
               model_path, stop_loss):
     with tf.Session() as sess:
-        data = Data(shot_path, samp_rate)
+        data = Data(data_path, samp_rate)
         output_size = OUTPUT_SIZE
         cnn = CNN(sess, data.input_size, data.o_depth, k_size, rnd.OBS_WIDTH,
                   rnd.OBS_HEIGHT, c1_fcnt, c2_fcnt, l_rate, multi_shot,
@@ -561,7 +579,7 @@ def train_cnn(shot_path, episode_size, minibatch_size, k_size, c1_fcnt,
 
 
 @train.command('fc')
-@click.argument('shot_path')
+@click.argument('data_path')
 @click.option('--episode', 'episode_size', default=10000, show_default=True,
               help="Learning episode number.")
 @click.option('--minibatch', 'minibatch_size', default=20, show_default=True,
@@ -578,16 +596,16 @@ def train_cnn(shot_path, episode_size, minibatch_size, k_size, c1_fcnt,
               help="Step for display learning status.")
 @click.option('--imgstate', 'img_state', is_flag=True, default=False,
               show_default=True, help="Save state as image before shot.")
-@click.option('--modelpath', 'model_path', default="models/2ball_fc_model",
+@click.option('--modelpath', 'model_path', default="models/2ball_fc",
               show_default=True, help="Model save path.")
 @click.option('--stoploss', 'stop_loss', default=0.1, show_default=True,
               help="Stop train if all shot losses are below this value.")
-def train_fc(shot_path, episode_size, minibatch_size, hidden_size, l_rate,
+def train_fc(data_path, episode_size, minibatch_size, hidden_size, l_rate,
              samp_rate, multi_shot, show_step, img_state, model_path,
              stop_loss):
 
     with tf.Session() as sess:
-        data = Data(shot_path, samp_rate)
+        data = Data(data_path, samp_rate)
         output_size = OUTPUT_SIZE if multi_shot else 1
         fc = FullyConnected(sess, INPUT_SIZE, hidden_size, l_rate, multi_shot,
                             output_size)
