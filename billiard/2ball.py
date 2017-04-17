@@ -314,7 +314,7 @@ def bot_play(model_path, play_cnt, img_state, enc_output):
             # shot
             s = env._get_obs()
             if img_state:
-                rnd.save_encoded_image("botplay_{}.png".format(i), s)
+                rnd.save_image("botplay_{}.png".format(i), s, enc_output)
 
             prob = net.predict(s)
             if not net.multi_shot:
