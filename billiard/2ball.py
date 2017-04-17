@@ -25,8 +25,8 @@ BALL_COLOR = [
 ]
 BALL_POS = [
     (120, 202),  # Cue
-    (300, 200),  # Red
-    # (550, 200),  # Red
+    # (300, 200),  # Red
+    (550, 200),  # Red
 ]
 MINSET_BALL_POS = [
     (200, 300),  # 0
@@ -54,9 +54,9 @@ class TwoBallEnv(BilliardEnv):
         # st = time.time()
         hit_list, obs, fcnt = self.viewer.shot_and_get_result(action)
         # print("shot_and_get_result elapsed {:.2f}".format(time.time() - st))
-        reward = 100.0 / fcnt if len(hit_list) > 0 else 0
+        reward = (100.0 / fcnt) if len(hit_list) > 0 else 0
         # if reward > 0:
-        #    print("action {}, fcnt {}".format(action, fcnt))
+        #  print("action {}, fcnt {}, reward {}".format(action, fcnt, reward))
         done = True
         return obs, reward, done, {}
 
@@ -82,18 +82,16 @@ class TwoBallEnv(BilliardEnv):
         return np.array(shots)
 
     def best_shot(self):
-        shots = np.nonzero(self.all_good_shots())[0]
-        if len(shots) > 0:
-            mean = np.mean(shots)
-            var = np.var(shots)
-            if var > SPLIT_SHOT_VAR:
-                action = np.min(shots) if mean < 30 else np.max(shots)
-            else:
-                action = find_nearest(shots, mean)
-            return action
-        else:
-            # no good shot. return default
-            return 9
+        max_a = 0
+        max_reward = 0
+        self.viewer.store_balls()
+        for a in range(rnd.DIV_OF_CIRCLE):
+            obs, reward, done, _ = self._step((a, DEFAULT_FORCE))
+            self.viewer.restore_balls()
+            if reward > max_reward:
+                max_a = a
+                max_reward = reward
+        return max_a
 
 
 @click.group()
@@ -320,9 +318,13 @@ def bot_play(model_path, play_cnt, img_state, enc_output):
 
             prob = net.predict(s)
             if not net.multi_shot:
-                fa = prob[0][0]
-                a = np.rint(fa) % rnd.DIV_OF_CIRCLE
-                print("shot {} prob {}, fa {} a {}".format(i+1, prob, fa, a))
+                if info['output_size'] > 1:
+                    a = np.argmax(prob)
+                    print("shot {}, a {}".format(i+1, prob, a))
+                else:
+                    fa = prob[0][0]
+                    a = np.rint(fa) % rnd.DIV_OF_CIRCLE
+                    print("shot {} prob {}, fa {} a {}".format(i+1, prob, fa, a))
             else:
                 pc = np.percentile(prob, 95)
                 a = np.random.choice(np.nonzero(prob[0] >= pc)[0])
@@ -471,6 +473,7 @@ class Train:
                 si = selected[i]
                 y = [[self.data.actions[si]]]
                 summary, loss, Y, logits, train = self._update(state, y, eidx, i)
+                # print("ep {} batch {} y {} logit {}".format(eidx, i, np.argmax(y), np.argmax(logits)))
                 shot_losses[si] = loss
                 # state, reward, done, _ = env.step((a, DEFAULT_FORCE))
 
@@ -518,6 +521,7 @@ class TrainCNN(Train):
     def _update(self, state, y, eidx, midx):
         ay = np.zeros(rnd.DIV_OF_CIRCLE)
         ay[y[0][0]] = 1
+        scipy.misc.imsave('state.png', state)
         summary, loss, L1, L2, Y, logits, train = self.net.update(state, [ay])
 
         if self.img_conv and eidx % 100 == 0:
@@ -537,7 +541,8 @@ class TrainCNN(Train):
                 if m > 0:
                     img = img / m
                 fname = "shots/cnn-ep{}-c2_{}.png".format(eidx, i)
-                scipy.misc.imsave(fname, img)
+                shape = (int(rnd.OBS_HEIGHT * 0.25), int(rnd.OBS_WIDTH * 0.25))
+                scipy.misc.imsave(fname, img.reshape(shape))
 
         return  summary, loss, Y, logits, train
 
@@ -548,9 +553,9 @@ class TrainCNN(Train):
               help="Learning episode number.")
 @click.option('--minibatch', 'minibatch_size', default=20, show_default=True,
               help="Learning minibatch size.")
-@click.option('--k_size', default=3, show_default=True, help="Kernel size.")
-@click.option('--c1_fcnt', default=32, show_default=True, help="Conv1 filter count.")
-@click.option('--c2_fcnt', default=64, show_default=True, help="Conv2 filter count.")
+@click.option('--ksize', 'k_size', default=3, show_default=True, help="Kernel size.")
+@click.option('--c1fcnt', 'c1_fcnt', default=32, show_default=True, help="Conv1 filter count.")
+@click.option('--c2fcnt', 'c2_fcnt', default=64, show_default=True, help="Conv2 filter count.")
 @click.option('--lrate', 'l_rate', default=0.01, show_default=True,
               help="Learning rate.")
 @click.option('--samprate', 'samp_rate', default=1.0, show_default=True,
@@ -618,14 +623,14 @@ def test_shot_1():
     env = TwoBallEnv()
     env.query_viewer()
     shot = False
-    env.reset_balls([(370, 210), (400, 300)])
+    env.reset_balls([(200, 300), (500, 300)])
 
     while True:
         env._render()
         if not shot:
-            a = env.best_shot()
+            # a = env.best_shot()
             # env.viewer.random_shot()
-            env.viewer.shot((a, DEFAULT_FORCE))
+            env.viewer.shot((12, DEFAULT_FORCE))
             shot = True
         if env.viewer.move_end():
             print(env.viewer.hit_list)

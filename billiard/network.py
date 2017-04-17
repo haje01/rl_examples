@@ -77,7 +77,7 @@ class CNN(Network):
     def _build_network(self, l_rate):
         with tf.variable_scope(self.net_name):
             self._X = tf.placeholder(tf.float32, [None, self.input_size])
-            self._X_img = tf.reshape(self._X, [-1, self.o_width, self.o_height,
+            self._X_img = tf.reshape(self._X, [-1, self.o_height, self.o_width,
                                                self.o_depth])
             self._Y = tf.placeholder(tf.float32, [None, self.output_size])
 

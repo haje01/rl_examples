@@ -7,7 +7,7 @@ import pyglet
 from pyglet.window import mouse
 from pyglet.gl import *  # NOQA
 
-WIN_WIDTH = 400  # 750
+WIN_WIDTH = 740
 WIN_HEIGHT = 400
 WALL_DEPTH = 30
 BALL_POINTS = 12
@@ -15,9 +15,10 @@ SLATE_COLOR = (0, 0.4, 0, 1)
 WALL_COLOR = (0.6, 0.3, 0.1)
 BALL_RAD = 12
 FORCE_EPS = 25
-FRICTION_RATE = 0.99
-HIT_FRICTION_RATE = 0.7
-HIT_FRICTION_RATE2 = 0.3
+DEFAULT_FRIC_RATE = 0.99
+HIT_FRIC_RATE = 0.7
+HIT_FRIC_RATE2 = 0.3
+WALL_FRIC_RATE = 0.8
 MAX_VEL = 1400
 FIX_DELTA = 0.01667
 GET_IMAGE_SKIP = 5 # 6
@@ -188,8 +189,8 @@ class Ball:
         nf = np.linalg.norm(nv)
         nof = np.linalg.norm(nov)
 
-        fric_rate = HIT_FRICTION_RATE2 if f < nf else HIT_FRICTION_RATE
-        ofric_rate = HIT_FRICTION_RATE2 if of < nof else HIT_FRICTION_RATE
+        fric_rate = HIT_FRIC_RATE2 if f < nf else HIT_FRIC_RATE
+        ofric_rate = HIT_FRIC_RATE2 if of < nof else HIT_FRIC_RATE
         nv = decelerate(nv, fric_rate)
         nov = decelerate(nov, ofric_rate)
 
@@ -199,19 +200,28 @@ class Ball:
     def update(self):
         self.pos = self.pos + self.vel*FIX_DELTA
 
+        hit_wall = False
         if self.pos[0] < Ball.min_pos[0]:
             self.vel[0] *= -1
+            hit_wall = True
         if self.pos[0] > Ball.max_pos[0]:
             self.vel[0] *= -1
+            hit_wall = True
         if self.pos[1] < Ball.min_pos[1]:
             self.vel[1] *= -1
+            hit_wall = True
         if self.pos[1] > Ball.max_pos[1]:
             self.vel[1] *= -1
+            hit_wall = True
+
         self.pos = np.clip(self.pos, Ball.min_pos, Ball.max_pos)
-        self.vel = decelerate(self.vel)
+        if hit_wall:
+            self.vel = decelerate(self.vel, WALL_FRIC_RATE)
+        else:
+            self.vel = decelerate(self.vel)
 
 
-def decelerate(vel, fric_rate=FRICTION_RATE):
+def decelerate(vel, fric_rate=DEFAULT_FRIC_RATE):
     f = np.linalg.norm(vel)
     if f > 0.0:
         nvel = vel / f
@@ -306,6 +316,7 @@ class Viewer:
             ball.update()
 
         # check collision
+        hit = False
         for i in range(self.numball):
             cball = self.balls[i]
             for j in range(i, self.numball):
@@ -315,12 +326,12 @@ class Viewer:
                 dist = cball.dist(ball)
                 # hit test
                 if dist < BALL_RAD * 2:
+                    hit = True
                     if ball not in self.hit_list:
                         self.hit_list.append(ball)
                     cball.repel(ball, dist)
-                    # cball.vel = [0, 0]
-                    # ball.vel = [0, 0]
                     cball.apply_hit_vel(ball, dist)
+        return hit
 
     def move_end(self):
         zv = np.array([0, 0])
@@ -375,10 +386,14 @@ class Viewer:
 
     def shot_and_get_result(self, action):
         self.shot(action)
-        fcnt = 0
+        fcnt = 1
+        hitted = False
         while True:
-            self.frame_move()
-            fcnt += 1
+            hit = self.frame_move()
+            if hit and not hitted:
+                hitted = True
+            if not hitted:
+                fcnt += 1
             if self.move_end():
                 break
         self.render(True)
