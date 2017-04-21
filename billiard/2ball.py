@@ -11,8 +11,10 @@ import tensorflow as tf
 from network import DQN, simple_replay_train, FullyConnected, CNN
 import rendering as rnd
 
-from environment import BilliardEnv, INPUT_SIZE, OUTPUT_SIZE
+from environment import BilliardEnv, DIV_OF_CIRCLE
 
+WIN_WIDTH = 740
+WIN_HEIGHT = 400
 
 NUM_BALL = 5
 BALL_NAME = [
@@ -52,7 +54,7 @@ class TwoBallEnv(BilliardEnv):
     def _step(self, action):
         # print("  _step")
         # st = time.time()
-        hit_list, obs, fcnt = self.viewer.shot_and_get_result(action)
+        hit_list, obs, fcnt = self.shot_and_get_result(action)
         # print("shot_and_get_result elapsed {:.2f}".format(time.time() - st))
         reward = (100.0 / fcnt) if len(hit_list) > 0 else 0
         # if reward > 0:
@@ -61,22 +63,22 @@ class TwoBallEnv(BilliardEnv):
         return obs, reward, done, {}
 
     def good_random_shot(self):
-        self.viewer.store_balls()
+        self.view.store_balls()
         # print("==== good_random_shot")
         while True:
-            action = np.random.randint(rnd.DIV_OF_CIRCLE)
+            action = np.random.randint(DIV_OF_CIRCLE)
             obs, reward, done, _ = self._step((action, DEFAULT_FORCE))
-            self.viewer.restore_balls()
+            self.view.restore_balls()
             if reward == 1:
                 # print("---- good_random_shot")
                 return action
 
     def all_good_shots(self):
-        shots = [0] * rnd.DIV_OF_CIRCLE
-        self.viewer.store_balls()
-        for a in range(rnd.DIV_OF_CIRCLE):
+        shots = [0] * DIV_OF_CIRCLE
+        self.view.store_balls()
+        for a in range(DIV_OF_CIRCLE):
             obs, reward, done, _ = self._step((a, DEFAULT_FORCE))
-            self.viewer.restore_balls()
+            self.view.restore_balls()
             if reward > 0:
                 shots[a] = 1
         return np.array(shots)
@@ -84,10 +86,10 @@ class TwoBallEnv(BilliardEnv):
     def best_shot(self):
         max_a = 0
         max_reward = 0
-        self.viewer.store_balls()
-        for a in range(rnd.DIV_OF_CIRCLE):
+        self.view.store_balls()
+        for a in range(DIV_OF_CIRCLE):
             obs, reward, done, _ = self._step((a, DEFAULT_FORCE))
-            self.viewer.restore_balls()
+            self.view.restore_balls()
             if reward > max_reward:
                 max_a = a
                 max_reward = reward
@@ -137,7 +139,7 @@ def play(playcnt):
 def gen_data(data_path, shot_cnt, minset, visible, show_step, img_state,
              enc_output):
     env = TwoBallEnv(enc_output)
-    env.query_viewer()
+    env.query_viewer(WIN_WIDTH, WIN_HEIGHT)
     state = env.reset()
     st = time.time()
 
@@ -150,22 +152,21 @@ def gen_data(data_path, shot_cnt, minset, visible, show_step, img_state,
 
         states.append(state)
         if img_state:
-            rnd.save_image("genshot_{}.png".format(pi), state, enc_output)
+            rnd.save_image("shots/gendata_{}.png".format(pi), state, enc_output,
+                           env.obs_depth)
 
-        ball_pos = [ball.pos for ball in env.viewer.balls]
+        ball_pos = [ball.pos for ball in env.view.balls]
         ball_poss.append(ball_pos)
 
-        # TODO: save every good shots and learn from it?
-        # TODO: select n-th order to learn, and save as n-th learn.
         a = env.best_shot()
         if pi % show_step == 0:
             print("Episode {} action {}".format(pi, a))
 
         if visible:
-            env.viewer.shot((a, DEFAULT_FORCE))
+            env.shot((a, DEFAULT_FORCE))
             while True:
                 env._render()
-                if env.viewer.move_end():
+                if env.view.move_end():
                     break
             time.sleep(0.5)
         else:
@@ -173,10 +174,8 @@ def gen_data(data_path, shot_cnt, minset, visible, show_step, img_state,
 
         actions.append(a)
 
-    o_depth = 1 if enc_output else rnd.OBS_DEPTH
-    input_size = INPUT_SIZE * o_depth
-    save_data(data_path, states, actions, ball_poss, input_size, shot_cnt,
-              minset, enc_output)
+    save_data(data_path, states, actions, ball_poss, env.obs_size, shot_cnt,
+              minset, env.obs_depth)
 
     elapsed = time.time() - st
     print("Saved {} shot data '{}' in {:.2f} sec.".format(shot_cnt, data_path,
@@ -204,9 +203,9 @@ def play_shot_data(data_path, visible):
                 ball_pos = ball_poss[i]
                 a = actions[i]
                 env.reset_balls(ball_pos)
-                env.viewer.shot((a, DEFAULT_FORCE))
+                env.shot((a, DEFAULT_FORCE))
 
-                while not env.viewer.move_end():
+                while not env.view.move_end():
                     env._render()
                 time.sleep(0.5)
 
@@ -223,28 +222,6 @@ def minset_rotate(env, pi):
     return state
 
 
-#@botplay.command('dqn')
-#@click.argument('model_path')
-#@click.option('--hidden', 'hidden_size', default=100, show_default=True,
-              #help="Hidden layer size.")
-#@click.option('--playcnt', 'play_cnt', show_default=True, default=100,
-              #help="Play episode count.")
-#def dqn_bot_play(model_path, hidden_size, l_rate, play_cnt):
-    #env = TwoBallEnv()
-    #env.query_viewer()
-    #env.reset()
-
-    #with tf.Session() as sess:
-        #dqn, info = DQN.create_from_model_info(sess, model_path + '.json')
-
-        #for i in range(play_cnt):
-            #env._render()
-            #if env.viewer.move_end():
-                #s = env._get_obs()
-                #a = np.argmax(dqn.predict(s))
-                #env.viewer.shot((a, DEFAULT_FORCE))
-
-
 @test.command('nn')
 @click.option('--hidden', 'hidden_size', default=100, show_default=True,
               help="Hidden layer size.")
@@ -255,7 +232,7 @@ def test_fc(model_info_path, hidden_size, test_cnt):
     env.query_viewer()
 
     with tf.Session() as sess:
-        nn = FullyConnected(sess, env.input_size, hidden_size, OUTPUT_SIZE)
+        nn = FullyConnected(sess, env.obs_size, hidden_size, 1)
         tf.global_variables_initializer().run()
 
         hit_cnt = 0
@@ -263,8 +240,7 @@ def test_fc(model_info_path, hidden_size, test_cnt):
         for i in range(test_cnt):
             prob = nn.predict(s)
             a = np.random.choice(np.nonzero(prob == prob.max())[0])
-            hit_list, s, fcnt = env.viewer.shot_and_get_result((a,
-                                                                DEFAULT_FORCE))
+            hit_list, s, fcnt = env.shot_and_get_result((a, DEFAULT_FORCE))
             reward = 1 if len(hit_list) > 0 else 0
             if i % 100 == 0:
                 print("episode {} action {} reward {}".format(i, a, reward))
@@ -303,7 +279,7 @@ def load_model(sess, model_path):
               show_default=True, help="Encode rgb output to number.")
 def bot_play(model_path, play_cnt, img_state, enc_output):
     env = TwoBallEnv(enc_output)
-    env.query_viewer()
+    env.query_viewer(WIN_WIDTH, WIN_HEIGHT)
     s = env.reset()
 
     with tf.Session() as sess:
@@ -314,7 +290,8 @@ def bot_play(model_path, play_cnt, img_state, enc_output):
             # shot
             s = env._get_obs()
             if img_state:
-                rnd.save_image("botplay_{}.png".format(i), s, enc_output)
+                rnd.save_image("botplay_{}.png".format(i), s, enc_output,
+                               env.obs_depth)
 
             prob = net.predict(s)
             if not net.multi_shot:
@@ -323,21 +300,22 @@ def bot_play(model_path, play_cnt, img_state, enc_output):
                     print("shot {}, a {}".format(i+1, prob, a))
                 else:
                     fa = prob[0][0]
-                    a = np.rint(fa) % rnd.DIV_OF_CIRCLE
-                    print("shot {} prob {}, fa {} a {}".format(i+1, prob, fa, a))
+                    a = np.rint(fa) % DIV_OF_CIRCLE
+                    print("shot {} prob {}, fa {} a {}".format(i+1, prob, fa,
+                                                               a))
             else:
                 pc = np.percentile(prob, 95)
                 a = np.random.choice(np.nonzero(prob[0] >= pc)[0])
-                a %= rnd.DIV_OF_CIRCLE
+                a %= DIV_OF_CIRCLE
                 print("shot {} prob {}, a {}".format(i+1, prob, a))
 
-            env.viewer.shot((a, DEFAULT_FORCE))
+            env.shot((a, DEFAULT_FORCE))
 
             # wait
             time.sleep(1)
             while True:
                 env._render()
-                if env.viewer.move_end():
+                if env.view.move_end():
                     break
 
 
@@ -346,7 +324,7 @@ def bot_play(model_path, play_cnt, img_state, enc_output):
               help="Learning episode number.")
 @click.option('--hidden', 'hidden_size', default=100, show_default=True,
               help="Hidden layer size.")
-@click.option('--lrate', 'l_rate', default=0.01, show_default=True,
+@click.option('--lrate', 'l_rate', default=0.001, show_default=True,
               help="Learning rate.")
 @click.option('--showstep', 'show_step', default=20, show_default=True,
               help="Step for display learning status.")
@@ -367,7 +345,7 @@ def train_dqn(episode_size, hidden_size, l_rate, show_step, gamma, replay_size,
     replay_buffer = deque()
 
     with tf.Session() as sess:
-        mainDQN = DQN(sess, env.input_size, hidden_size, l_rate, OUTPUT_SIZE)
+        mainDQN = DQN(sess, env.input_size, hidden_size, l_rate, 1)
         tf.global_variables_initializer().run()
 
         state = env.reset()
@@ -377,15 +355,6 @@ def train_dqn(episode_size, hidden_size, l_rate, show_step, gamma, replay_size,
             done = False
 
             action = env.good_random_shot()
-            #if np.random.rand(1) < eps:
-                ## action = env.action_space.sample()
-                #action = env.good_random_shot()
-                #print("  Random shot")
-            #else:
-                # action = np.random.choice(np.nonzero(prob == prob.max())[0])
-                ##scipy.misc.imsave('shot.png', state.reshape(rnd.OBS_HEIGHT,
-                                                            ##rnd.OBS_WIDTH,
-                                                            ##rnd.OBS_DEPTH))
 
             next_state, reward, done, _ = env.step((action, DEFAULT_FORCE))
             if done:
@@ -424,12 +393,11 @@ class Data:
             self.states = data['states']
             self.actions = data['actions']
 
+
 def save_data(data_path, states, actions, ball_poss, input_size, shot_cnt,
-              minset, enc_output):
+              minset, o_depth):
     info_path = "{}.json".format(data_path)
     with open(info_path, 'wt') as w:
-        o_depth = 1 if enc_output else rnd.OBS_DEPTH
-        input_size = INPUT_SIZE * o_depth
         info = dict(shot_cnt=shot_cnt, minset=minset, input_size=input_size,
                     o_depth=o_depth)
         w.write(json.dumps(info))
@@ -437,18 +405,16 @@ def save_data(data_path, states, actions, ball_poss, input_size, shot_cnt,
     npy_path = '{}.npy'.format(data_path)
     with open(npy_path, 'wb') as f:
         np.savez(f, shot_cnt=shot_cnt, minset=minset, ball_poss=ball_poss,
-                states=states, actions=actions)
+                 states=states, actions=actions)
 
 
 class Train:
 
-    def __init__(self, net, data, minibatch_size, samp_rate, enc_output):
+    def __init__(self, env, net, data, minibatch_size, samp_rate):
+        self.env = env
         self.net = net
         self.data = data
         self.minibatch_size = minibatch_size
-        self.env = TwoBallEnv(enc_output)
-        self.env.query_viewer()
-        self.env.reset()
 
     def _update(self, state, y, eidx, midx):
         summary, loss, Y, logits, train = self.net.update(state, y)
@@ -507,19 +473,17 @@ class Train:
 
 
 class TrainFC(Train):
-    def __init__(self, net, data, minibatch_size, samp_rate):
-        super(TrainFC, self).__init__(net, data, minibatch_size, samp_rate,
-                                      True)
+    def __init__(self, env, net, data, minibatch_size, samp_rate):
+        super(TrainFC, self).__init__(env, net, data, minibatch_size, samp_rate)
 
 
 class TrainCNN(Train):
-    def __init__(self, net, data, minibatch_size, samp_rate, img_conv):
-        super(TrainCNN, self).__init__(net, data, minibatch_size, samp_rate,
-                                       False)
+    def __init__(self, env, net, data, minibatch_size, samp_rate, img_conv):
+        super(TrainCNN, self).__init__(env, net, data, minibatch_size, samp_rate)
         self.img_conv = img_conv
 
     def _update(self, state, y, eidx, midx):
-        ay = np.zeros(rnd.DIV_OF_CIRCLE)
+        ay = np.zeros(DIV_OF_CIRCLE)
         ay[y[0][0]] = 1
         scipy.misc.imsave('state.png', state)
         summary, loss, L1, L2, Y, logits, train = self.net.update(state, [ay])
@@ -541,7 +505,7 @@ class TrainCNN(Train):
                 if m > 0:
                     img = img / m
                 fname = "shots/cnn-ep{}-c2_{}.png".format(eidx, i)
-                shape = (int(rnd.OBS_HEIGHT * 0.25), int(rnd.OBS_WIDTH * 0.25))
+                shape = (int(env.view.obs_height * 0.25), int(env.view.obs_width * 0.25))
                 scipy.misc.imsave(fname, img.reshape(shape))
 
         return  summary, loss, Y, logits, train
@@ -553,10 +517,13 @@ class TrainCNN(Train):
               help="Learning episode number.")
 @click.option('--minibatch', 'minibatch_size', default=20, show_default=True,
               help="Learning minibatch size.")
-@click.option('--ksize', 'k_size', default=3, show_default=True, help="Kernel size.")
-@click.option('--c1fcnt', 'c1_fcnt', default=32, show_default=True, help="Conv1 filter count.")
-@click.option('--c2fcnt', 'c2_fcnt', default=64, show_default=True, help="Conv2 filter count.")
-@click.option('--lrate', 'l_rate', default=0.01, show_default=True,
+@click.option('--ksize', 'k_size', default=3, show_default=True, help="Kernel "
+              "size.")
+@click.option('--c1fcnt', 'c1_fcnt', default=32, show_default=True, help="Conv1 "
+              "filter count.")
+@click.option('--c2fcnt', 'c2_fcnt', default=64, show_default=True, help="Conv2 "
+              "filter count.")
+@click.option('--lrate', 'l_rate', default=0.001, show_default=True,
               help="Learning rate.")
 @click.option('--samprate', 'samp_rate', default=1.0, show_default=True,
               help="Sampling rate of shot data.")
@@ -573,13 +540,18 @@ class TrainCNN(Train):
 def train_cnn(data_path, episode_size, minibatch_size, k_size, c1_fcnt,
               c2_fcnt,l_rate, samp_rate, multi_shot, show_step, img_conv,
               model_path, stop_loss):
+
+    env = TwoBallEnv(False)
+    view = env.query_viewer(WIN_WIDTH, WIN_HEIGHT)
+    env.reset()
+
     with tf.Session() as sess:
         data = Data(data_path, samp_rate)
-        output_size = OUTPUT_SIZE
-        cnn = CNN(sess, data.input_size, data.o_depth, k_size, rnd.OBS_WIDTH,
-                  rnd.OBS_HEIGHT, c1_fcnt, c2_fcnt, l_rate, multi_shot,
+        output_size = DIV_OF_CIRCLE
+        cnn = CNN(sess, data.input_size, data.o_depth, k_size, view.obs_width,
+                  view.obs_height, c1_fcnt, c2_fcnt, l_rate, multi_shot,
                   output_size)
-        train = TrainCNN(cnn, data, minibatch_size, samp_rate, img_conv)
+        train = TrainCNN(env, cnn, data, minibatch_size, samp_rate, img_conv)
         train.run(sess, episode_size, stop_loss, show_step, model_path)
 
 
@@ -591,7 +563,7 @@ def train_cnn(data_path, episode_size, minibatch_size, k_size, c1_fcnt,
               help="Learning minibatch size.")
 @click.option('--hidden', 'hidden_size', default=100, show_default=True,
               help="Hidden layer size.")
-@click.option('--lrate', 'l_rate', default=0.01, show_default=True,
+@click.option('--lrate', 'l_rate', default=0.001, show_default=True,
               help="Learning rate.")
 @click.option('--samprate', 'samp_rate', default=1.0, show_default=True,
               help="Sampling rate of shot data.")
@@ -609,31 +581,32 @@ def train_fc(data_path, episode_size, minibatch_size, hidden_size, l_rate,
              samp_rate, multi_shot, show_step, img_state, model_path,
              stop_loss):
 
+    env = TwoBallEnv(True)
+    env.query_viewer()
+
     with tf.Session() as sess:
         data = Data(data_path, samp_rate)
-        output_size = OUTPUT_SIZE if multi_shot else 1
-        fc = FullyConnected(sess, INPUT_SIZE, hidden_size, l_rate, multi_shot,
+        output_size = DIV_OF_CIRCLE if multi_shot else 1
+        fc = FullyConnected(sess, env.obs_size, hidden_size, l_rate, multi_shot,
                             output_size)
-        train = TrainFC(fc, data, minibatch_size, samp_rate)
+        train = TrainFC(env, fc, data, minibatch_size, samp_rate)
         train.run(sess, episode_size, stop_loss, show_step, model_path)
 
 
 @shottest.command('1')
 def test_shot_1():
     env = TwoBallEnv()
-    env.query_viewer()
+    view = env.query_viewer()
     shot = False
     env.reset_balls([(200, 300), (500, 300)])
 
     while True:
         env._render()
         if not shot:
-            # a = env.best_shot()
-            # env.viewer.random_shot()
-            env.viewer.shot((12, DEFAULT_FORCE))
+            env.shot((12, DEFAULT_FORCE))
             shot = True
-        if env.viewer.move_end():
-            print(env.viewer.hit_list)
+        if view.move_end():
+            print(view.hit_list)
             break
 
 
