@@ -1,5 +1,5 @@
 import math
-import random
+from enum import Enum
 
 import scipy.misc
 import numpy as np
@@ -7,20 +7,20 @@ import pyglet
 from pyglet.window import mouse
 from pyglet.gl import *  # NOQA
 
-WIN_WIDTH = 740
-WIN_HEIGHT = 400
 WALL_DEPTH = 30
 BALL_POINTS = 12
+HOLE_POINTS = 24
 SLATE_COLOR = (0, 0.4, 0, 1)
 WALL_COLOR = (0.6, 0.3, 0.1)
 BALL_RAD = 12
-FORCE_EPS = 25
+HOLE_RAD = 35
+HOLEIN_DIST = HOLE_RAD * 0.9
+FORCE_EPS = 30
 DEFAULT_FRIC_RATE = 0.99
 HIT_FRIC_RATE = 0.7
 HIT_FRIC_RATE2 = 0.3
 WALL_FRIC_RATE = 0.8
 FIX_DELTA = 0.01667
-NUM_BALL = 5
 RGB_TO_BYTE = {
     (  0, 102,   0): 0,  # Slate
     (153,  76,  25): 1,  # Wall
@@ -28,25 +28,26 @@ RGB_TO_BYTE = {
     (255,   0,   0): 3,  # Red
 }
 
-BYTE_TO_RGB = {c:rgb for rgb, c in RGB_TO_BYTE.items()}
+BYTE_TO_RGB = {c: rgb for rgb, c in RGB_TO_BYTE.items()}
 
 NO_COL_DIST = 2
 MAX_COL_REPEL = 30
 CON_HIT_LIMIT = 1
+SHOT_LINE_LEN = 80
 
 
-# window = pyglet.window.Window(width=WIN_WIDTH, height=WIN_HEIGHT)
-circle = None
-# ball_pos = [WIN_WIDTH * 0.5, WIN_HEIGHT * 0.5]
-# ball_vel = np.array([0, 0])
+class BState(Enum):
+    NORMAL = 1
+    HOLEIN = 2
+    FREEBALL = 3
 
 
-def make_circle(ptcnt):
+def make_circle(rad, ptcnt):
     verts = []
     for i in range(ptcnt):
         angle = math.radians(float(i)/ptcnt * 360.0)
-        x = BALL_RAD * math.cos(angle)
-        y = BALL_RAD * math.sin(angle)
+        x = rad * math.cos(angle)
+        y = rad * math.sin(angle)
         verts += [x, y]
     return pyglet.graphics.vertex_list(ptcnt, ('v2f', verts))
 
@@ -66,7 +67,7 @@ def draw_polygon(v):
 
 
 class Ball:
-    circle = make_circle(BALL_POINTS)
+    ball_circle = make_circle(BALL_RAD, BALL_POINTS)
 
     def __init__(self, view, name, no, pos, color):
         self.view = view
@@ -74,11 +75,22 @@ class Ball:
         self.no = no
         self.pos = np.array(pos)
         self.color = color
-        self.reset_vel()
+        self.reset()
         self.hit = False
+
+    def reset(self):
+        self.state = BState.NORMAL
+        self.reset_vel()
 
     def reset_vel(self):
         self.vel = np.array([0, 0])
+
+    def holein(self):
+        self.state = BState.HOLEIN
+        self.reset_vel()
+
+    def is_normal(self):
+        return self.state == BState.NORMAL
 
     def __repr__(self):
         return self.name
@@ -90,12 +102,15 @@ class Ball:
         else:
             glColor3f(*self.color)
         glTranslatef(self.pos[0], self.pos[1], 0)
-        Ball.circle.draw(GL_TRIANGLE_FAN)
+        Ball.ball_circle.draw(GL_TRIANGLE_FAN)
         glPopMatrix()
 
     def dist(self, other):
+        return self._dist(other.pos)
+
+    def _dist(self, opos):
         x, y = self.pos
-        ox, oy = other.pos
+        ox, oy = opos
         return math.sqrt((x - ox) ** 2 + (y - oy) ** 2)
 
     def repel(self, other, dist):
@@ -181,13 +196,16 @@ def get_display(spec):
 
 
 class Viewer:
+    hole_circle = make_circle(HOLE_RAD, HOLE_POINTS)
 
-    def __init__(self, width, height, ball_name, ball_color, ball_pos,
-                 enc_output, display=None, obs_image_skip=5, obs_woff=0,
-                 obs_hoff=0):
+    def __init__(self, env, width, height, ball_info, hole_info, enc_output,
+                 display=None, obs_image_skip=5, obs_woff=0, obs_hoff=0):
         display = get_display(display)
+        self.env = env
         self.width = width
         self.height = height
+        self.hwidth = int(width * 0.5)
+        self.hheight = int(height * 0.5)
         self.obs_image_skip = obs_image_skip
         self.obs_hwoff = int(obs_woff * 0.5)
         self.obs_width = math.ceil(width / obs_image_skip) - obs_woff
@@ -202,51 +220,119 @@ class Viewer:
         self.window.on_mouse_drag = self.on_mouse_drag
         self.window.on_mouse_motion = self.on_mouse_motion
         self.window.on_draw = self.on_draw
-        self.numball = len(ball_color)
+        self.num_ball = len(ball_info)
         self.enc_output = enc_output
-        assert self.numball == len(ball_pos)
         self.balls = []
         self.hit_list = []
+        self.holein_list = []
         self.min_pos = np.array([WALL_DEPTH + BALL_RAD, WALL_DEPTH + BALL_RAD])
         self.max_pos = np.array([self.width - WALL_DEPTH - BALL_RAD,
                                  self.height - WALL_DEPTH - BALL_RAD])
-        for i in range(self.numball):
-            name = ball_name[i]
-            pos = ball_pos[i]
-            color = ball_color[i]
+        for i, bi in enumerate(ball_info):
+            name = bi[0]
+            color = bi[1]
+            pos = bi[2]
             ball = Ball(self, name, i, pos, color)
             self.balls.append(ball)
+
+        self.hole_info = hole_info
+        self.drag_start = False
+
+    def clear_shot_result(self):
+        self.hit_list = []
+        self.holein_list = []
 
     def reset_balls(self, ball_poss):
         assert len(ball_poss) == len(self.balls)
         for i, ball in enumerate(self.balls):
             ball.pos = ball_poss[i]
-            ball.reset_vel()
+            ball.reset()
+
+    @property
+    def cueball(self):
+        return self.balls[0]
 
     def set_ball_vel(self, vel, ball_idx=0):
         self.balls[ball_idx].vel = vel
 
+    def is_freeball(self):
+        return self.cueball.state == BState.FREEBALL
+
+    def is_holein(self):
+        return self.cueball.state == BState.HOLEIN
+
+    def start_freeball(self):
+            self.cueball.state = BState.FREEBALL
+            self.cueball.pos = self.hwidth, self.hheight
+
     def on_mouse_press(self, x, y, button, modifiers):
-        if button == mouse.LEFT:
-            self.random_shot()
+        self.drag_start = self.move_end()
 
     def on_mouse_release(self, x, y, button, modifiers):
-        if button == mouse.LEFT:
-            print("Left Button release, modifiers {}".format(modifiers))
+        if self.is_freeball():
+            if button == mouse.LEFT:
+                self.cueball.pos = x, y
+                self.cueball.state = BState.NORMAL
+        else:
+            self.env.drag_shot()
+            self.drag_start = False
 
     def on_mouse_drag(self, x, y, dx, dy, buttons, modifiers):
-        print("Mouse Drag x {}, y {}, dx {}, dy {}, buttons {}".format(x, y,
-                                                                       dx, dy))
+        if self.drag_start:
+            self.env.prepare_drag_shot(x, y)
 
     def on_mouse_motion(self, x, y, dx, dy):
-        print("Mouse Motion x {}, y {}, dx {}, dy {}".format(x, y, dx, dy))
+        # print("Mouse Motion x {}, y {}, dx {}, dy {}".format(x, y, dx, dy))
+        if self.is_freeball():
+            self.cueball.pos = x, y
 
     def on_draw(self):
         self.render()
 
     def draw_ball(self):
         for ball in self.balls:
+            if ball.state == BState.HOLEIN:
+                continue
             ball.draw()
+
+    def draw_hole(self):
+        if self.hole_info is None:
+            return
+
+        glColor3f(0, 0, 0)
+        for hi in self.hole_info:
+            glPushMatrix()
+            glTranslatef(hi[0], hi[1], 0)
+            Viewer.hole_circle.draw(GL_TRIANGLE_FAN)
+            glPopMatrix()
+
+    def draw_line(self):
+        if self.env.drag_shot_info is None:
+            return
+
+        sdir, _, force = self.env.drag_shot_info
+        sdir = np.array(sdir)
+        frate = force / self.env.div_of_force
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_SRC_ALPHA)
+        glEnable(GL_LINE_SMOOTH)
+        glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE)
+
+        glLineWidth(5)
+        pyglet.gl.glColor4f(frate, frate * 0.4, frate * 0.4, 0.8)
+        start = self.cueball.pos
+        end = start + sdir
+        line = [int(i) for i in (*start, *end)]
+        pyglet.graphics.draw(2, pyglet.gl.GL_LINES, ('v2i', line))
+
+        glDisable(GL_BLEND)
+        pyglet.gl.glColor4f(0.5, 0.5, 0.5, 1.0)
+        glLineWidth(1)
+        start = self.cueball.pos
+        end = start - sdir / np.linalg.norm(sdir) * SHOT_LINE_LEN
+        line = [int(i) for i in (*start, *end)]
+        pyglet.graphics.draw(2, pyglet.gl.GL_LINES, ('v2i', line))
+
 
     def draw_wall(self):
         # left
@@ -272,16 +358,22 @@ class Viewer:
 
     def frame_move(self, dt=None):
         for ball in self.balls:
+            if ball.state != BState.NORMAL:
+                continue
             ball.update()
 
         # check collision
         hit = False
-        for i in range(self.numball):
+        for i in range(self.num_ball):
             cball = self.balls[i]
-            for j in range(i, self.numball):
-                if i == j:
-                    continue
+            if not cball.is_normal():
+                continue
+
+            for j in range(i, self.num_ball):
                 ball = self.balls[j]
+                if i == j or not ball.is_normal():
+                    continue
+
                 dist = cball.dist(ball)
                 # hit test
                 if dist < BALL_RAD * 2:
@@ -290,22 +382,54 @@ class Viewer:
                         self.hit_list.append(ball)
                     cball.repel(ball, dist)
                     cball.apply_hit_vel(ball, dist)
-        return hit
+
+        # check hole in
+        holein = False
+        for ball in self.balls:
+            if not ball.is_normal():
+                continue
+
+            for hi in self.hole_info:
+                dist = ball._dist(hi)
+                if dist < HOLEIN_DIST:
+                    ball.holein()
+                    if ball not in self.holein_list:
+                        self.holein_list.append(ball)
+                    holein = True
+
+        return hit, holein
 
     def move_end(self):
         zv = np.array([0, 0])
         for ball in self.balls:
+            if not ball.is_normal():
+                continue
             if not np.array_equal(ball.vel, zv):
                 return False
         return True
+
+    def draw_hud(self):
+        hud = self.env._get_hud()
+        if hud is None:
+            return
+        text, x, y = hud
+        color = (255, 0, 0, 255) if 'Red' in text else (0, 0, 255, 255)
+        label = pyglet.text.Label(text, font_name='Arial',
+                                  font_size=13, x=x, y=y, anchor_x='left',
+                                  anchor_y='bottom', color=color)
+        label.draw()
 
     def render(self, return_rgb_array=False, window_flip=False):
         glClearColor(*SLATE_COLOR)
         self.window.clear()
         self.window.switch_to()
         self.window.dispatch_events()
+        self.draw_hole()
         self.draw_wall()
+        self.draw_line()
         self.draw_ball()
+        if not return_rgb_array:
+            self.draw_hud()
         arr = None
         if return_rgb_array:
             arr = self._get_image()
@@ -323,7 +447,7 @@ class Viewer:
 
         # preprocessing
         arr = arr.reshape(self.height, self.width, 4)
-        arr = arr[::self.obs_image_skip, ::self.obs_image_skip, 0:3]  # downsample
+        arr = arr[::self.obs_image_skip, ::self.obs_image_skip, 0:3]
         if self.obs_hwoff > 0:
             arr = arr[self.obs_hwoff:-self.obs_hwoff, :]
         if self.obs_hhoff > 0:
@@ -336,8 +460,8 @@ class Viewer:
         else:
             return arr
 
-    def _get_obs(self):
-        return self.render(True)
+    def _get_obs(self, hud):
+        return self.render(True, hud)
 
     def save_image(self, fname):
         arr = self._get_image()
@@ -346,11 +470,12 @@ class Viewer:
     def store_balls(self):
         self.balls_store = {}
         for ball in self.balls:
-            self.balls_store[ball] = ball.pos
+            self.balls_store[ball] = (ball.pos, ball.state)
 
     def restore_balls(self):
         for ball in self.balls:
-            ball.pos = self.balls_store[ball]
+            ball.pos = self.balls_store[ball][0]
+            ball.state = self.balls_store[ball][1]
             ball.reset_vel()
 
 

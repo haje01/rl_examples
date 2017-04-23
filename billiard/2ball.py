@@ -16,14 +16,16 @@ from environment import BilliardEnv, DIV_OF_CIRCLE
 WIN_WIDTH = 740
 WIN_HEIGHT = 400
 
-NUM_BALL = 5
+DIV_OF_FORCE = 10
+MAX_VEL = 1400
+
 BALL_NAME = [
     "Cue",
     "Red"
 ]
 BALL_COLOR = [
     (1, 1, 1),  # Cue
-    (1, 0, 0),  # Red
+    (1, 0, 0),  # Red ]
 ]
 BALL_POS = [
     (120, 202),  # Cue
@@ -47,9 +49,10 @@ def find_nearest(arr, value):
 
 
 class TwoBallEnv(BilliardEnv):
-    def __init__(self, enc_output=True):
-        super(TwoBallEnv, self).__init__(BALL_NAME, BALL_COLOR, BALL_POS,
-                                         enc_output)
+    def __init__(self, enc_output):
+        ball_info = list(zip(BALL_NAME, BALL_COLOR, BALL_POS))
+        super(TwoBallEnv, self).__init__(ball_info, None, MAX_VEL,
+                                         DIV_OF_FORCE, enc_output)
 
     def _step(self, action):
         # print("  _step")
@@ -61,6 +64,21 @@ class TwoBallEnv(BilliardEnv):
         #  print("action {}, fcnt {}, reward {}".format(action, fcnt, reward))
         done = True
         return obs, reward, done, {}
+
+    def shot_and_get_result(self, action):
+        self.shot(action)
+        fcnt = 1
+        hitted = False
+        while True:
+            hit, _ = self.view.frame_move()
+            if hit and not hitted:
+                hitted = True
+            if not hitted:
+                fcnt += 1
+            if self.view.move_end():
+                break
+        self.view.render(True)
+        return self.view.hit_list[:], self._get_obs(), fcnt
 
     def good_random_shot(self):
         self.view.store_balls()
@@ -152,8 +170,8 @@ def gen_data(data_path, shot_cnt, minset, visible, show_step, img_state,
 
         states.append(state)
         if img_state:
-            rnd.save_image("shots/gendata_{}.png".format(pi), state, enc_output,
-                           env.obs_depth)
+            rnd.save_image("shots/gendata_{}.png".format(pi), state,
+                           enc_output, env.obs_depth)
 
         ball_pos = [ball.pos for ball in env.view.balls]
         ball_poss.append(ball_pos)
@@ -182,32 +200,32 @@ def gen_data(data_path, shot_cnt, minset, visible, show_step, img_state,
                                                           elapsed))
 
 
-@cli.command("playshot", help="Play shot data.")
-@click.argument('data_path')
-@click.option('--visible', 'visible', is_flag=True, default=False,
-              show_default=True, help="Visible shot process.")
-def play_shot_data(data_path, visible):
-    with open(data_path, 'rb') as f:
-        data = np.load(f)
-        print("shot_cnt {}, minset {}".format(data['shot_cnt'],
-                                              data['minset']))
+#@cli.command("playshot", help="Play shot data.")
+#@click.argument('data_path')
+#@click.option('--visible', 'visible', is_flag=True, default=False,
+              #show_default=True, help="Visible shot process.")
+#def play_shot_data(data_path, visible):
+    #with open(data_path, 'rb') as f:
+        #data = np.load(f)
+        #print("shot_cnt {}, minset {}".format(data['shot_cnt'],
+                                              #data['minset']))
 
-        shot_cnt = data['shot_cnt']
-        ball_poss = data['ball_poss']
-        actions = data['actions']
-        if visible:
-            env = TwoBallEnv()
-            env.query_viewer()
-            env.reset()
-            for i in range(shot_cnt):
-                ball_pos = ball_poss[i]
-                a = actions[i]
-                env.reset_balls(ball_pos)
-                env.shot((a, DEFAULT_FORCE))
+        #shot_cnt = data['shot_cnt']
+        #ball_poss = data['ball_poss']
+        #actions = data['actions']
+        #if visible:
+            #env = TwoBallEnv()
+            #env.query_viewer()
+            #env.reset()
+            #for i in range(shot_cnt):
+                #ball_pos = ball_poss[i]
+                #a = actions[i]
+                #env.reset_balls(ball_pos)
+                #env.shot((a, DEFAULT_FORCE))
 
-                while not env.view.move_end():
-                    env._render()
-                time.sleep(0.5)
+                #while not env.view.move_end():
+                    #env._render()
+                #time.sleep(0.5)
 
 
 def minset_rotate(env, pi):
@@ -222,31 +240,31 @@ def minset_rotate(env, pi):
     return state
 
 
-@test.command('nn')
-@click.option('--hidden', 'hidden_size', default=100, show_default=True,
-              help="Hidden layer size.")
-@click.option('--test', 'test_cnt', default=1000, show_default=True,
-              help="Test episode count.")
-def test_fc(model_info_path, hidden_size, test_cnt):
-    env = TwoBallEnv()
-    env.query_viewer()
+#@test.command('nn')
+#@click.option('--hidden', 'hidden_size', default=100, show_default=True,
+              #help="Hidden layer size.")
+#@click.option('--test', 'test_cnt', default=1000, show_default=True,
+              #help="Test episode count.")
+#def test_fc(model_info_path, hidden_size, test_cnt):
+    #env = TwoBallEnv()
+    #env.query_viewer()
 
-    with tf.Session() as sess:
-        nn = FullyConnected(sess, env.obs_size, hidden_size, 1)
-        tf.global_variables_initializer().run()
+    #with tf.Session() as sess:
+        #nn = FullyConnected(sess, env.obs_size, hidden_size, 1)
+        #tf.global_variables_initializer().run()
 
-        hit_cnt = 0
-        s = env.reset()
-        for i in range(test_cnt):
-            prob = nn.predict(s)
-            a = np.random.choice(np.nonzero(prob == prob.max())[0])
-            hit_list, s, fcnt = env.shot_and_get_result((a, DEFAULT_FORCE))
-            reward = 1 if len(hit_list) > 0 else 0
-            if i % 100 == 0:
-                print("episode {} action {} reward {}".format(i, a, reward))
-            if reward == 1:
-                hit_cnt += 1
-        print("Accuracy: {}".format(float(hit_cnt) / test_cnt))
+        #hit_cnt = 0
+        #s = env.reset()
+        #for i in range(test_cnt):
+            #prob = nn.predict(s)
+            #a = np.random.choice(np.nonzero(prob == prob.max())[0])
+            #hit_list, s, fcnt = env.shot_and_get_result((a, DEFAULT_FORCE))
+            #reward = 1 if len(hit_list) > 0 else 0
+            #if i % 100 == 0:
+                #print("episode {} action {} reward {}".format(i, a, reward))
+            #if reward == 1:
+                #hit_cnt += 1
+        #print("Accuracy: {}".format(float(hit_cnt) / test_cnt))
 
 
 def load_model(sess, model_path):
@@ -420,7 +438,7 @@ class Train:
         summary, loss, Y, logits, train = self.net.update(state, y)
         return summary, loss, Y, logits, train
 
-    def _train(state, y):
+    def _train(self, state, y):
         summary, loss, Y, logits, train = self.net.update(state, y)
         return  summary, loss, Y, logits, train
 
@@ -431,14 +449,16 @@ class Train:
         shot_losses = np.empty(self.data.shot_cnt)
         shot_losses.fill(1000)
         for eidx in range(episode_size):
-            selected = np.random.randint(0, self.data.shot_cnt, self.minibatch_size)
+            selected = np.random.randint(0, self.data.shot_cnt,
+                                         self.minibatch_size)
             minibatch = self.data.states[selected]
             # rnd.save_encoded_image("train_{}.png".format(eidx), states[0])
 
             for i, state in enumerate(minibatch):
                 si = selected[i]
                 y = [[self.data.actions[si]]]
-                summary, loss, Y, logits, train = self._update(state, y, eidx, i)
+                summary, loss, Y, logits, train = self._update(state, y, eidx,
+                                                               i)
                 # print("ep {} batch {} y {} logit {}".format(eidx, i, np.argmax(y), np.argmax(logits)))
                 shot_losses[si] = loss
                 # state, reward, done, _ = env.step((a, DEFAULT_FORCE))
@@ -505,7 +525,8 @@ class TrainCNN(Train):
                 if m > 0:
                     img = img / m
                 fname = "shots/cnn-ep{}-c2_{}.png".format(eidx, i)
-                shape = (int(env.view.obs_height * 0.25), int(env.view.obs_width * 0.25))
+                shape = (int(self.env.view.obs_height * 0.25),
+                         int(self.env.view.obs_width * 0.25))
                 scipy.misc.imsave(fname, img.reshape(shape))
 
         return  summary, loss, Y, logits, train
