@@ -152,6 +152,17 @@ class Ball:
         self.vel = nv
         other.vel = nov
 
+    def _check_wall_hit(self):
+        if self.pos[0] < self.view.min_pos[0]:
+            return True
+        if self.pos[0] > self.view.max_pos[0]:
+            return True
+        if self.pos[1] < self.view.min_pos[1]:
+            return True
+        if self.pos[1] > self.view.max_pos[1]:
+            return True
+        return False
+
     def update(self):
         self.pos = self.pos + self.vel*FIX_DELTA
 
@@ -220,6 +231,7 @@ class Viewer:
         self.window.on_mouse_drag = self.on_mouse_drag
         self.window.on_mouse_motion = self.on_mouse_motion
         self.window.on_draw = self.on_draw
+        self.ball_info = ball_info
         self.num_ball = len(ball_info)
         self.enc_output = enc_output
         self.balls = []
@@ -242,10 +254,11 @@ class Viewer:
         self.hit_list = []
         self.holein_list = []
 
-    def reset_balls(self, ball_poss):
-        assert len(ball_poss) == len(self.balls)
-        for i, ball in enumerate(self.balls):
-            ball.pos = ball_poss[i]
+    def reset_balls(self, ball_poss=None):
+        for i, bi in enumerate(self.ball_info):
+            pos = bi[2] if ball_poss is None else ball_poss[i]
+            ball = self.balls[i]
+            ball.pos = pos
             ball.reset()
 
     @property
@@ -266,14 +279,15 @@ class Viewer:
             self.cueball.pos = self.hwidth, self.hheight
 
     def on_mouse_press(self, x, y, button, modifiers):
-        self.drag_start = self.move_end()
-
-    def on_mouse_release(self, x, y, button, modifiers):
         if self.is_freeball():
-            if button == mouse.LEFT:
+            if self.is_valid_fb() and button == mouse.LEFT:
                 self.cueball.pos = x, y
                 self.cueball.state = BState.NORMAL
         else:
+            self.drag_start = self.move_end()
+
+    def on_mouse_release(self, x, y, button, modifiers):
+        if not self.is_freeball():
             self.env.drag_shot()
             self.drag_start = False
 
@@ -306,12 +320,49 @@ class Viewer:
             Viewer.hole_circle.draw(GL_TRIANGLE_FAN)
             glPopMatrix()
 
-    def draw_line(self):
-        if self.env.drag_shot_info is None:
-            return
+    def is_valid_fb(self):
+        cball = self.cueball
 
+        if cball._check_wall_hit():
+            return False
+
+        for hi in self.hole_info:
+            dist = cball._dist(hi)
+            if dist < HOLEIN_DIST:
+                return False
+
+        for ball in self.balls:
+            if ball is cball:
+                continue
+            dist = ball.dist(cball)
+            if dist < BALL_RAD * 2:
+                return False
+
+        return True
+
+    def draw_line(self):
+        if self.is_freeball():
+            if not self.is_valid_fb():
+                self._draw_xline()
+        elif self.env.drag_shot_info is not None:
+            self._draw_shotline()
+
+    def _draw_xline(self):
+        glLineWidth(5)
+        pyglet.gl.glColor4f(0, 0, 0, 1.0)
+        start = self.cueball.pos + np.array([15, 15])
+        end = self.cueball.pos + np.array([-15, -15])
+        line = [int(i) for i in (*start, *end)]
+        pyglet.graphics.draw(2, pyglet.gl.GL_LINES, ('v2i', line))
+        start = self.cueball.pos + np.array([-15, 15])
+        end = self.cueball.pos + np.array([15, -15])
+        line = [int(i) for i in (*start, *end)]
+        pyglet.graphics.draw(2, pyglet.gl.GL_LINES, ('v2i', line))
+
+    def _draw_shotline(self):
         sdir, _, force = self.env.drag_shot_info
         sdir = np.array(sdir)
+        nsdir = sdir / (np.linalg.norm(sdir) + 1)
         frate = force / self.env.div_of_force
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_SRC_ALPHA)
@@ -320,16 +371,16 @@ class Viewer:
 
         glLineWidth(5)
         pyglet.gl.glColor4f(frate, frate * 0.4, frate * 0.4, 0.8)
-        start = self.cueball.pos
+        start = self.cueball.pos + nsdir * BALL_RAD
         end = start + sdir
         line = [int(i) for i in (*start, *end)]
         pyglet.graphics.draw(2, pyglet.gl.GL_LINES, ('v2i', line))
 
         glDisable(GL_BLEND)
-        pyglet.gl.glColor4f(0.5, 0.5, 0.5, 1.0)
+        pyglet.gl.glColor4f(0.6, 0.6, 0.6, 1.0)
         glLineWidth(1)
-        start = self.cueball.pos
-        end = start - sdir / np.linalg.norm(sdir) * SHOT_LINE_LEN
+        start = self.cueball.pos - nsdir * BALL_RAD
+        end = start - nsdir * SHOT_LINE_LEN
         line = [int(i) for i in (*start, *end)]
         pyglet.graphics.draw(2, pyglet.gl.GL_LINES, ('v2i', line))
 
@@ -375,7 +426,6 @@ class Viewer:
                     continue
 
                 dist = cball.dist(ball)
-                # hit test
                 if dist < BALL_RAD * 2:
                     hit = True
                     if ball not in self.hit_list:
@@ -426,8 +476,8 @@ class Viewer:
         self.window.dispatch_events()
         self.draw_hole()
         self.draw_wall()
-        self.draw_line()
         self.draw_ball()
+        self.draw_line()
         if not return_rgb_array:
             self.draw_hud()
         arr = None

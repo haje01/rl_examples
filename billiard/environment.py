@@ -57,7 +57,7 @@ class BilliardEnv(gym.Env):
         return self.view._get_image()
 
     def _reset(self):
-        self.view.reset_balls(self.ball_poss)
+        self.view.reset_balls()
         return self._get_obs(False)
 
     def reset_balls(self, poss):
@@ -68,7 +68,7 @@ class BilliardEnv(gym.Env):
         if close:
             if self.view is not None:
                 self.view.close()
-                self.view = None
+                # self.view = None
             return
 
         self.query_viewer(self.view.width, self.view.height)
