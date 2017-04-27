@@ -90,8 +90,11 @@ class BilliardEnv(gym.Env):
             self.obs_size = self.view.pixel_size * self.obs_depth
             return self.view
 
-    def shot(self, action):
+    def shot(self, action, show_info=True):
         deg, force = action
+        # force = int(force)
+        if show_info:
+            print(deg, force)
         self.view.clear_shot_result()
         deg *= 360 / DIV_OF_CIRCLE
         rad = math.radians(deg)

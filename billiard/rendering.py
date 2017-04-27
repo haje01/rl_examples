@@ -281,8 +281,7 @@ class Viewer:
     def on_mouse_press(self, x, y, button, modifiers):
         if self.is_freeball():
             if self.is_valid_fb() and button == mouse.LEFT:
-                self.cueball.pos = x, y
-                self.cueball.state = BState.NORMAL
+                self.set_freeball(x, y)
         else:
             self.drag_start = self.move_end()
 
@@ -302,6 +301,10 @@ class Viewer:
 
     def on_draw(self):
         self.render()
+
+    def set_freeball(self, x, y):
+        self.cueball.pos = x, y
+        self.cueball.state = BState.NORMAL
 
     def draw_ball(self):
         for ball in self.balls:
