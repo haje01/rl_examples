@@ -250,6 +250,9 @@ class Viewer:
         self.hole_info = hole_info
         self.drag_start = False
 
+    def count_vis_balls(self):
+        return len([b for b in self.balls if b.state != BState.NORMAL])
+
     def clear_shot_result(self):
         self.hit_list = []
         self.holein_list = []
@@ -521,14 +524,15 @@ class Viewer:
         scipy.misc.imsave(fname, arr)
 
     def store_balls(self):
-        self.balls_store = {}
+        stored = {}
         for ball in self.balls:
-            self.balls_store[ball] = (ball.pos, ball.state)
+            stored[ball] = (ball.pos, ball.state)
+        return stored
 
-    def restore_balls(self):
+    def restore_balls(self, stored):
         for ball in self.balls:
-            ball.pos = self.balls_store[ball][0]
-            ball.state = self.balls_store[ball][1]
+            ball.pos = stored[ball][0]
+            ball.state = stored[ball][1]
             ball.reset_vel()
 
 

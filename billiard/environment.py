@@ -92,9 +92,10 @@ class BilliardEnv(gym.Env):
 
     def shot(self, action, show_info=True):
         deg, force = action
+        self.last_force = force
         # force = int(force)
-        if show_info:
-            print(deg, force)
+        # if show_info:
+        #    print(deg, force)
         self.view.clear_shot_result()
         deg *= 360 / DIV_OF_CIRCLE
         rad = math.radians(deg)
