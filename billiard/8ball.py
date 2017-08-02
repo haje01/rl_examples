@@ -560,7 +560,7 @@ def main():
     for i, iS in enumerate(initial_state):
         if i < 16:
             iS.radius = BALL_RADIUS
-            iS.linear_damping = 0.6
+            iS.linear_damping = 0.7
             iS.angular_damping = 0.5
             iS.restitution = 0.9
 
@@ -576,7 +576,7 @@ def main():
     game = GameCore()
 
     box = Box(
-        interval_rate=60,
+        interval_rate=80,
         adaptive=False,
         width=game.width,
         height=game.height,

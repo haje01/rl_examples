@@ -1,8 +1,9 @@
 __pycache__
 .ipynb_checkpoints
 .cache
-*.png
 *.sav
+*.png
+!billiard/pool_table_700x385.png
 *.meta
 *.swp
 *.pyc

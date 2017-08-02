@@ -132,7 +132,7 @@ class Player(object):
                 maxm = nm
                 break
             else:
-                k = v + math.sqrt(c * math.log(t) / float(n))
+                k = v + c * math.sqrt(math.log(t) / float(n))
             # print("  nm: {} v: {} n: {} k: {}".format(nm, v, n, k))
             if maxk is None or k > maxk:
                 maxm, maxk, maxn = nm, k, n
