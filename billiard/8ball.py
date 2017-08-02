@@ -551,7 +551,7 @@ class GameCore:
         self.curr_time = start_time
         self.prev_time = start_time
 
-    def on_draw(self, scale):
+    def on_draw(self):
         self.render()
 
 
