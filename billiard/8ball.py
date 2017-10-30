@@ -1,6 +1,7 @@
 import time
 import math
 from collections import namedtuple
+import copy
 
 import matplotlib.path as mplPath
 import numpy as np
@@ -10,7 +11,7 @@ from Box2D import (b2World, b2BodyDef, b2FixtureDef, b2Body, b2CircleShape,
     b2Vec2, b2PolygonShape)
 
 import pyglet
-from pyglet.window import mouse
+from pyglet.window import mouse, key
 from pyglet.gl import *  # NOQA
 
 Point = namedtuple('Point', ['x', 'y'])
@@ -19,6 +20,8 @@ RGBA = namedtuple('RGBA', ['r', 'g', 'b', 'a'])
 Body = namedtuple('Body', ['x', 'y', 'angle', 'center'])
 
 SCALE = 30.0
+INTERVAL_RATE = 65
+ITERATION = 10
 
 ball_to_hit = None
 ball_to_move = None
@@ -121,8 +124,8 @@ class Box:
         start = time.time()
         step_rate = 1 / self.interval_rate
         self.world.Step(step_rate,  # frame rate
-                        10,  # velocity iterations
-                        10)  # position iterations
+                        ITERATION,  # velocity iterations
+                        ITERATION)  # position iterations
         self.world.ClearForces()
         return time.time() - start
 
@@ -384,15 +387,6 @@ def pt_on_table(pt):
     return (pt.x > (38/SCALE) and pt.x < (661/SCALE)) and (pt.y > (38/SCALE) and pt.y < (347/SCALE))
 
 
-#def clear_table():
-    #for i in range(16):
-        #entity = world[i]
-        #box.remove_body(i)
-        #entity.y = BE.y
-        #entity.x = BE.x + (2 * i * BALL_RADIUS) + (2 * BALL_RADIUS)
-        #box.add_body(entity)
-
-
 def rack_8ball():
     for i in range(16):
         entity = world[i]
@@ -420,25 +414,6 @@ class GameCore:
         self.width = CANVAS_WIDTH
         self.height = CANVAS_HEIGHT
         self.is_running = False
-
-    #def update(self, elapsed_time):
-        #box.update()
-        #bodies_state = box.get_state()
-        #for bid in bodies_state:
-            #entity = world[bid]
-            #if entity is not None:
-                #entity.update(bodies_state)
-                #for pt in GOAL_PTS:
-                    #if intersect(entity, pt, 0.2):
-                        #entity.dead = True
-                        #try:
-                            #box.remove_body(bid)
-                            #entity.pos = BE.pos
-                            #entity.on_table = False
-                            #box.add_body(entity)
-                            #box.apply_impulse(bid, 0, 2)
-                        #except Exception as e:
-                            #print(e)
 
     def render(self):
         self.window.clear()
@@ -472,6 +447,12 @@ class GameCore:
         self.window.on_mouse_press = self.on_mouse_press
         self.window.on_mouse_release = self.on_mouse_release
         self.window.on_mouse_drag = self.on_mouse_drag
+        self.window.on_key_press = self.on_key_press
+
+    def on_key_press(self, symbol, modifiers):
+        if symbol == key.Z:
+            # self.restore_balls()
+            pass
 
     def on_mouse_drag(self, x, y, dx, dy, buttons, modifiers):
         global mouse_down_pt
@@ -491,6 +472,14 @@ class GameCore:
             if selected_ball.on_table:
                 ball_to_hit = selected_ball
                 ball_to_hit.selected = True
+        # self.store_balls()
+
+    def store_balls(self):
+        bodies_state = box.get_state()
+        self.prev_bodies_map = copy.deepcopy(box.bodies_map)
+
+    def restore_balls(self):
+        box.bodies_map = self.prev_bodies_map
 
     def on_mouse_release(self, x, y, button, modifiers):
         global ball_to_move, ball_to_hit
@@ -521,16 +510,21 @@ class GameCore:
         self.init()
         self.load_resources(self.canvas)
         self.launch_loop()
+        skip_render = False
         while True:
-            self.render()
+            render = True
             box.update()
             bodies_state = box.get_state()
             for bid in bodies_state:
                 entity = world[bid]
                 if entity is not None:
                     entity.update(bodies_state[bid])
+                    body = box.bodies_map[bid]
+                    if skip_render and body.type == Box2D.b2_dynamicBody and\
+                            body.awake:
+                        render = False
                     for pt in GOAL_PTS:
-                        if intersect(entity.pos, pt, 0.2):
+                        if intersect(entity.pos, pt, BALL_RADIUS):
                             entity.dead = True
                             try:
                                 box.remove_body(bid)
@@ -540,6 +534,8 @@ class GameCore:
                                 box.apply_impulse(bid, 0, 2)
                             except Exception as e:
                                 print(e)
+            if render:
+                self.render()
 
 
     def stop(self):
@@ -576,7 +572,7 @@ def main():
     game = GameCore()
 
     box = Box(
-        interval_rate=80,
+        interval_rate=INTERVAL_RATE,
         adaptive=False,
         width=game.width,
         height=game.height,
