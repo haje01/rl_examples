@@ -11,3 +11,4 @@ __pycache__
 .ropeproject
 checkpoint
 .DS_Store
+runs/
