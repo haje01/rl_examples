@@ -14,6 +14,7 @@ from skimage.transform import resize
 from tensorboardX import SummaryWriter
 
 
+RENDER = True
 ACTION_SIZE = 3
 RENDER_SX = 160
 RENDER_SY = 210
@@ -28,10 +29,10 @@ UPDATE_TARGET_FREQ = 10000
 BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
-LEARNING_RATE = 0.001
+LEARNING_RATE = 5e-5
 GRADIENT_UPDATE_FREQ = 4
 TRAIN_START = 50000
-UPDATE_BOARD_FREQ = 100
+SAVE_FREQ = 100
 
 writer = SummaryWriter()
 
@@ -165,9 +166,10 @@ def init_env():
     # v4: 이전 동작을 반복하지 않음
     env = gym.make('BreakoutDeterministic-v4')
     env.reset()
-    env.render()
-    env.env.viewer.window.width = RENDER_SX
-    env.env.viewer.window.height = RENDER_SY
+    if RENDER:
+        env.render()
+        env.env.viewer.window.width = RENDER_SX
+        env.env.viewer.window.height = RENDER_SY
     return env
 
 
@@ -206,7 +208,8 @@ def train():
 
         done = False
         while not done:
-            env.render()
+            if RENDER:
+                env.render()
             if len(agent.memory) < TRAIN_START and global_step % 500 == 0:
                 print("filling replay buffer: {:.2f}".
                       format(global_step / float(TRAIN_START)))
@@ -251,7 +254,14 @@ def train():
                 writer.add_scalar('data/qmax', agent.avg_q_max / float(step),
                                   e)
                 writer.add_scalar('data/step', step, e)
+                writer.add_scalar('data/eps', agent.eps, e)
                 agent.avg_q_max, agent.avg_loss, step = 0, 0, 0
+
+                # 모델 저장
+                if e % SAVE_FREQ == 0:
+                    path = f"breakout_{e}.pth"  # NOQA
+                    torch.save(agent.net.state_dict(), path)
+                    print("saved: {}".format(path))
 
             score += reward
 
