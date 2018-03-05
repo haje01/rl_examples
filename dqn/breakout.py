@@ -30,7 +30,6 @@ BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
 LEARNING_RATE = 5e-5
-GRADIENT_UPDATE_FREQ = 4
 TRAIN_START = 50000
 SAVE_FREQ = 100
 
@@ -74,7 +73,7 @@ class DQNAgent:
         self.explore_steps = 100000  # 초당 7회(스킵포함)로 보면 40시간 동안 탐험 하는 것
         self.eps_decay = (self.eps_start - self.eps_end) / self.explore_steps
         self.memory = deque(maxlen=MAX_REPLAY)
-        self.avg_q_max, self.avg_loss = 0, 0
+        self.avg_q_max, self.avg_loss, self.avg_reward = 0, 0, 0
         self.optimizer = optim.RMSprop(params=self.net.parameters(),
                                        lr=LEARNING_RATE)
 
@@ -229,6 +228,7 @@ def train():
             # Q값을 예측
             r = agent.net(history)[0]
             agent.avg_q_max += float(r[0].max())
+            agent.avg_reward += reward
 
             # 죽은 경우 처리
             if start_life > info['ale.lives']:
@@ -250,12 +250,15 @@ def train():
 
             if done and len(agent.memory) > TRAIN_START:
                 # 텐서 보드에 알려줌
+                writer.add_scalar('data/reward',
+                                  agent.avg_reward, e)
                 writer.add_scalar('data/loss', agent.avg_loss / float(step), e)
                 writer.add_scalar('data/qmax', agent.avg_q_max / float(step),
                                   e)
                 writer.add_scalar('data/step', step, e)
                 writer.add_scalar('data/eps', agent.eps, e)
-                agent.avg_q_max, agent.avg_loss, step = 0, 0, 0
+                agent.avg_reward, agent.avg_q_max, agent.avg_loss, step = \
+                    0, 0, 0, 0
 
                 # 모델 저장
                 if e % SAVE_FREQ == 0:
