@@ -1,5 +1,7 @@
+# -#- coding: utf8 -*-
 """Breakout을 DQN으로."""
 import random
+import time
 from collections import deque
 
 import numpy as np
@@ -14,6 +16,7 @@ from skimage.transform import resize
 from tensorboardX import SummaryWriter
 
 
+TRAIN = True
 RENDER = True
 ACTION_SIZE = 3
 RENDER_SX = 160
@@ -262,12 +265,72 @@ def train():
 
                 # 모델 저장
                 if e % SAVE_FREQ == 0:
-                    path = f"breakout_{e}.pth"  # NOQA
+                    path = "breakout_{}.pth".format(e)
                     torch.save(agent.net.state_dict(), path)
                     print("saved: {}".format(path))
 
             score += reward
 
 
+def play():
+    """플레이."""
+    env = init_env()
+    agent = DQNAgent()
+    agent.net.load_state_dict(torch.load("breakout_900.pth"))
+    global_step = 0
+
+    while True:
+        observe = env.reset()
+        dead = False
+        step, score, start_life = 0, 0, 5
+
+        state = pre_processing(observe)
+        # 최초는 동일한 4 프레임을 쌓음
+        history = np.stack((state, state, state, state), axis=0)
+        # batch, width, height, frames
+        history = np.reshape([history], (1, 4, 84, 84))
+        save_history = np.reshape([history], (4, 84, 84))
+
+        done = False
+        while not done:
+            if RENDER:
+                env.render()
+                time.sleep(0.0333)
+            global_step += 1
+            step += 1
+
+            state = pre_processing(observe)
+            action = agent.get_action(history)
+            raction = agent.get_real_action(action)
+            observe, reward, done, info = env.step(raction)
+            next_state = pre_processing(observe)
+            # # 저장
+            # save_state = np.reshape([next_state], (1, 84, 84))
+            # save_history = np.append(save_state, save_history[:3, :, :], axis=0)
+            # from scipy import misc
+            # misc.imsave('save.png', save_history.reshape(4*84, 84))
+
+            # 배치가 포함된 형태로 변형
+            next_state = np.reshape([next_state], (1, 1, 84, 84))
+            # 픽셀 단위로 최신 + 최근 3개 이력을 설정.
+            next_history = np.append(next_state, history[:, :3, :, :], axis=1)
+
+            # misc.imsave('clipped.png', state)
+
+            # 죽은 경우 처리
+            if start_life > info['ale.lives']:
+                dead = True
+                start_life = info['ale.lives']
+
+            if dead:
+                dead = False
+            else:
+                history = next_history
+
+            score += reward
+
 if __name__ == '__main__':
-    train()
+    if TRAIN:
+        train()
+    else:
+        play()
