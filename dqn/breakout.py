@@ -17,6 +17,7 @@ from tensorboardX import SummaryWriter
 
 
 TRAIN = True
+LOAD_MODEL = "breakout_700.pth"
 RENDER = True
 ACTION_SIZE = 3
 RENDER_SX = 160
@@ -27,7 +28,6 @@ NO_OP_STEPS = 30
 CLIP_TOP = 32
 CLIP_BOTTOM = 18
 TRAIN_IMAGE_SIZE = 84
-MAX_REPLAY = 400000
 UPDATE_TARGET_FREQ = 10000
 BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
@@ -35,6 +35,12 @@ DISCOUNT_FACTOR = 0.99
 LEARNING_RATE = 5e-5
 TRAIN_START = 50000
 SAVE_FREQ = 100
+
+# 리플레이 당 필요한 메모리
+#     32*0.55/50799 = 363KB
+# 80,000 리플레이시 필요한 메모리
+#     32*0.55/50799*80000 = 27GB
+MAX_REPLAY = 40000  # 약 14GB 메모리 필요
 
 writer = SummaryWriter()
 
@@ -80,12 +86,12 @@ class DQNAgent:
         self.optimizer = optim.RMSprop(params=self.net.parameters(),
                                        lr=LEARNING_RATE)
 
-    def get_action(self, state):
+    def get_action(self, history):
         """이력을 입력으로 모델에서 동작을 예측하거나 eps로 탐험."""
         if np.random.randn() <= self.eps:
             return random.randrange(ACTION_SIZE)
         else:
-            q_val = self.net(state)
+            q_val = self.net(history)
             action = int(q_val[0].max(0)[1])
             return action
 
@@ -105,9 +111,9 @@ class DQNAgent:
         else:
             return 3
 
-    def append_sample(self, state, action, reward, next_state, dead):
+    def append_sample(self, history, action, reward, next_history, dead):
         """플레이 이력을 추가."""
-        self.memory.append((state, action, reward, next_state, dead))
+        self.memory.append((history, action, reward, next_history, dead))
 
     def train_model(self):
         """리플레이 메모리에서 무작위로 추출한 배치로 모델 학습."""
@@ -117,32 +123,34 @@ class DQNAgent:
         # 배치 데이터 샘플링
         mini_batch = random.sample(self.memory, BATCH_SIZE)
         # 이력 버퍼 초기화
-        states = np.zeros((BATCH_SIZE, STATE_SIZE[0], STATE_SIZE[1],
-                           STATE_SIZE[2]))
-        next_states = np.zeros((BATCH_SIZE, STATE_SIZE[0], STATE_SIZE[1],
-                                STATE_SIZE[2]))
+        histories = np.zeros((BATCH_SIZE, STATE_SIZE[0], STATE_SIZE[1],
+                             STATE_SIZE[2]))
+        next_histories = np.zeros((BATCH_SIZE, STATE_SIZE[0], STATE_SIZE[1],
+                                   STATE_SIZE[2]))
         targets = np.zeros(BATCH_SIZE)
         actions, rewards, deads = [], [], []
 
         # 모든 샘플에 대해
         for i in range(BATCH_SIZE):
             sample = mini_batch[i]
-            states[i] = sample[0]
-            next_states[i] = sample[3]
+            histories[i] = sample[0]
+            next_histories[i] = sample[3]
             actions.append(sample[1])
             rewards.append(sample[2])
             deads.append(sample[4])
 
         # nump -> torch FloatTensor로 변환
-        states = torch.from_numpy(states).float()
-        next_states = torch.from_numpy(next_states).float()
+        histories = torch.from_numpy(histories).float()
+        next_histories = torch.from_numpy(next_histories).float()
 
-        # 모델에서 이번 이력에 대한 가치를 예측
+        # 모델에서 이번 이력의 동작 가치를 예측
         actions = torch.LongTensor(actions).unsqueeze(1)
-        q_values = self.net(states).gather(1, Variable(actions))
+        # 이력으로 동작 가치(Q) 배열 예측 후, 동작을 인덱스로 동작 가치를 얻음
+        q_values = self.net(histories).gather(1, Variable(actions))
 
-        # 타겟 모델에서 다음 이력에 대한 타겟 가치를 예측
-        target_values = self.target_net(next_states).data.numpy().max(1)
+        # 타겟 모델에서 다음 이력에 대한 동작 가치를 예측한 후, 최대값을 타겟 밸류로
+        # (Q-Learning update)
+        target_values = self.target_net(next_histories).data.numpy().max(1)
 
         # 모든 버퍼 요소에 대해
         for i in range(BATCH_SIZE):
@@ -153,7 +161,7 @@ class DQNAgent:
                 targets[i] = rewards[i] + DISCOUNT_FACTOR * target_values[i]
         targets = Variable(torch.from_numpy(targets)).float()
 
-        # # 이력과 타겟 이력의 차이가 로스
+        # 모델과 타겟 모델에서 예측한 Q밸류의 차이가 손실
         loss = F.smooth_l1_loss(q_values, targets, size_average=False)
         loss.backward()
         self.optimizer.step()
@@ -276,7 +284,7 @@ def play():
     """플레이."""
     env = init_env()
     agent = DQNAgent()
-    agent.net.load_state_dict(torch.load("breakout_900.pth"))
+    agent.net.load_state_dict(torch.load(LOAD_MODEL))
     global_step = 0
 
     while True:
@@ -289,7 +297,7 @@ def play():
         history = np.stack((state, state, state, state), axis=0)
         # batch, width, height, frames
         history = np.reshape([history], (1, 4, 84, 84))
-        save_history = np.reshape([history], (4, 84, 84))
+        # save_history = np.reshape([history], (4, 84, 84))
 
         done = False
         while not done:
@@ -306,7 +314,8 @@ def play():
             next_state = pre_processing(observe)
             # # 저장
             # save_state = np.reshape([next_state], (1, 84, 84))
-            # save_history = np.append(save_state, save_history[:3, :, :], axis=0)
+            # save_history = np.append(save_state, save_history[:3, :, :],
+            #                          axis=0)
             # from scipy import misc
             # misc.imsave('save.png', save_history.reshape(4*84, 84))
 
