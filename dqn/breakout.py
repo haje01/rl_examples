@@ -33,27 +33,34 @@ BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
 LEARNING_RATE = 5e-5
-TRAIN_START = 50000
 SAVE_FREQ = 100
 
 # 리플레이 당 필요한 메모리
 #     32*0.55/50799 = 363KB
+# 400,000 리플레이시 필요한 메모리 (강화학습 책)
+#     32*0.55/50799*400000 = 139GB
 # 80,000 리플레이시 필요한 메모리
 #     32*0.55/50799*80000 = 27GB
+
+# 케라스 강화학습 책 코드
+# MAX_REPLAY = 400000  # 약 139GB 메모리 필요
+# TRAIN_START = 50000
 MAX_REPLAY = 40000  # 약 14GB 메모리 필요
+TRAIN_START = 20000
 
 writer = SummaryWriter()
 
 
 class DQN(nn.Module):
-    """Depp Q-Network."""
+    """Deep Q-Network."""
 
     def __init__(self, action_size):
         """init."""
         super(DQN, self).__init__()
         self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.fc1 = nn.Linear(64 * 9 * 9, 512)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)
         self.fc2 = nn.Linear(512, ACTION_SIZE)
 
     def forward(self, state):
@@ -62,6 +69,7 @@ class DQN(nn.Module):
         # PyTorch 입력은 Batch, Channel, Height, Width 를 가정
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
         # 첫 번째 배치 사이즈는 그대로 이용하고, 나머지는 as is로 flatten
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
