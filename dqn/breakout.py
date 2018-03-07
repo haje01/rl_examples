@@ -4,6 +4,7 @@ import random
 import time
 from collections import deque
 
+import psutil
 import numpy as np
 import gym
 import torch
@@ -209,7 +210,12 @@ def train():
     global_step = 0
 
     for e in range(NUM_EPISODE):
-        print("Episode: {}".format(e))
+        vmem = psutil.virtual_memory()
+        avail = vmem.available / pow(2, 30)
+        perc = vmem.percent
+        free = vmem.free / pow(2, 30)
+        print("Episode: {} - memory available: {:.1f}, percent: {:.1f}, "
+              "free: {:.1f}".format(e, avail, perc, free))
         env.reset()
         dead = False
         step, score, start_life = 0, 0, 5
