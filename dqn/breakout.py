@@ -204,7 +204,7 @@ def pre_processing(observe):
     state = state[:-CLIP_BOTTOM, :, :]
     state = resize(rgb2gray(state), (TRAIN_IMAGE_SIZE, TRAIN_IMAGE_SIZE),
                    mode='constant')
-    state = np.uint8(state) * 255
+    state = np.uint8(state * 255)
     # from scipy import misc
     # misc.imsave('clipped.png', state)
     return state
