@@ -36,8 +36,8 @@ BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
 LEARNING_RATE = 5e-5
-SAVE_FREQ = 100
-TRAIN_START = 20000
+SAVE_FREQ = 300
+TRAIN_START = 50000
 EXPLORE_STEPS = 100000
 GIGA = pow(2, 30)
 
@@ -45,6 +45,7 @@ GIGA = pow(2, 30)
 #     57KB 정도
 # 케라스 강화학습 책 코드
 # MAX_REPLAY = 400000  # 약 22GB 메모리 필요
+# TRAIN_START = 50000
 MAX_REPLAY = 200000  # 약 11GB 메모리 필요
 
 writer = SummaryWriter()
@@ -107,7 +108,7 @@ class DQNAgent:
         else:
             history = np.float32(history / 255.)
             q_val = self.net(history)
-            action = int(q_val[0].max(0)[1])
+            action = int(np.argmax(q_val.data.numpy()))
             return action
 
     def update_target_net(self):
@@ -184,8 +185,9 @@ class DQNAgent:
         loss = F.smooth_l1_loss(q_values, targets, size_average=False)
         loss.backward()
         self.optimizer.step()
-        self.avg_loss += loss[0]
-        return loss[0]
+        loss = loss.data[0]  # loss[0]으로 하면 Variable을 리턴!
+        self.avg_loss += loss
+        return loss
 
 
 def init_env():
@@ -223,7 +225,7 @@ def train():
     agent = DQNAgent()
     global_step = 0
 
-    for e in range(NUM_EPISODE):
+    for e in range(1, NUM_EPISODE + 1):
         env.reset()
         dead = False
         step, score, start_life = 0, 0, 5
@@ -313,7 +315,6 @@ def train():
                 #       format(size * len(agent.memory) / 1024. / 1024.))
                 agent.avg_reward, agent.avg_q_max, agent.avg_loss, step = \
                     0, 0, 0, 0
-                gc.collect()
 
                 # 모델 저장
                 if e % SAVE_FREQ == 0:
