@@ -1,5 +1,6 @@
 # -#- coding: utf8 -*-
 """Breakout을 DQN으로."""
+import sys
 import random
 import time
 from collections import deque
@@ -36,6 +37,8 @@ DISCOUNT_FACTOR = 0.99
 LEARNING_RATE = 5e-5
 SAVE_FREQ = 100
 TRAIN_START = 20000
+EXPLORE_STEPS = 100000
+GIGA = pow(2, 30)
 
 # 리플레이 당 필요한 메모리
 #     57KB 정도
@@ -82,18 +85,21 @@ class DQNAgent:
         self.update_target_net()
         self.eps = 1.0
         self.eps_start, self.eps_end = 1.0, 0.1
-        self.explore_steps = 100000  # 초당 7회(스킵포함)로 보면 40시간 동안 탐험 하는 것
-        self.eps_decay = (self.eps_start - self.eps_end) / self.explore_steps
+        self.eps_decay = (self.eps_start - self.eps_end) / EXPLORE_STEPS
         self.memory = deque(maxlen=MAX_REPLAY)
         self.avg_q_max, self.avg_loss, self.avg_reward = 0, 0, 0
         self.optimizer = optim.RMSprop(params=self.net.parameters(),
                                        lr=LEARNING_RATE)
+        self.replay_buf_size = 0
 
     def get_action(self, history):
         """이력을 입력으로 모델에서 동작을 예측하거나 eps로 탐험.
 
         Args:
             history: byte 형 이력
+
+        Returns:
+            0: 정지, 1: 오른쪽, 2: 왼쪽
         """
         if np.random.randn() <= self.eps:
             return random.randrange(ACTION_SIZE)
@@ -217,13 +223,6 @@ def train():
     global_step = 0
 
     for e in range(NUM_EPISODE):
-        vmem = psutil.virtual_memory()
-        avail = vmem.available / pow(2, 30)
-        perc = vmem.percent
-        free = vmem.free / pow(2, 30)
-        print("Episode: {} - replay: {}, memory available: {:.1f}GB, percent:"
-              " {:.1f}%, free: {:.1f}GB".format(e, len(agent.memory), avail,
-                                                perc, free))
         env.reset()
         dead = False
         step, score, start_life = 0, 0, 5
@@ -244,7 +243,7 @@ def train():
                 env.render()
             if len(agent.memory) < TRAIN_START and global_step % 500 == 0:
                 print("filling replay buffer: {:.2f}".
-                      format(global_step / float(TRAIN_START)))
+                      format(len(agent.memory) / float(TRAIN_START)))
             global_step += 1
             step += 1
 
@@ -281,15 +280,36 @@ def train():
             else:
                 history = next_history
 
-            if done and len(agent.memory) > TRAIN_START:
-                # 텐서 보드에 알려줌
-                writer.add_scalar('data/reward',
-                                  agent.avg_reward, e)
-                writer.add_scalar('data/loss', agent.avg_loss / float(step), e)
-                writer.add_scalar('data/qmax', agent.avg_q_max / float(step),
-                                  e)
-                writer.add_scalar('data/step', step, e)
-                writer.add_scalar('data/eps', agent.eps, e)
+            if done:
+                if len(agent.memory) > TRAIN_START:
+                    # 학습 패러미터
+                    writer.add_scalar('data/reward',
+                                      agent.avg_reward, e)
+                    writer.add_scalar('data/loss', agent.avg_loss /
+                                      float(step), e)
+                    writer.add_scalar('data/qmax', agent.avg_q_max /
+                                      float(step), e)
+                    writer.add_scalar('data/step', step, e)
+                    writer.add_scalar('data/eps', agent.eps, e)
+
+                # 메모리 관련 패러미터
+                vmem = psutil.virtual_memory()
+                total = vmem.total / GIGA
+                avail = vmem.available / GIGA
+                perc = vmem.percent
+                free = vmem.free / GIGA
+                print("Episode: {} - replay: {}, memory available: {:.1f}GB, "
+                      "percent: {:.1f}%, free: {:.1f}GB".
+                      format(e, len(agent.memory), avail, perc, free))
+                writer.add_scalars('data/memory',
+                                   {'total': total, 'avail': avail,
+                                    'free': free,
+                                    'replay': agent.replay_buf_size}, e)
+                size = sum([sys.getsizeof(i) for i in agent.memory[-1]])
+                agent.replay_buf_size = size * len(agent.memory) / GIGA
+                # writer.add_scalar('mem/replay', size * len(agent.memory), e)
+                # print("replay buffer size: {:.1f}MB".
+                #       format(size * len(agent.memory) / 1024. / 1024.))
                 agent.avg_reward, agent.avg_q_max, agent.avg_loss, step = \
                     0, 0, 0, 0
 
