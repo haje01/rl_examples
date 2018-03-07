@@ -214,8 +214,9 @@ def train():
         avail = vmem.available / pow(2, 30)
         perc = vmem.percent
         free = vmem.free / pow(2, 30)
-        print("Episode: {} - memory available: {:.1f}, percent: {:.1f}, "
-              "free: {:.1f}".format(e, avail, perc, free))
+        print("Episode: {} - replay: {}, memory available: {:.1f}GB, percent:"
+              " {:.1f}%, free: {:.1f}GB".format(e, len(agent.memory), avail,
+                                                perc, free))
         env.reset()
         dead = False
         step, score, start_life = 0, 0, 5
