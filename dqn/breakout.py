@@ -35,19 +35,13 @@ STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
 LEARNING_RATE = 5e-5
 SAVE_FREQ = 100
+TRAIN_START = 20000
 
 # 리플레이 당 필요한 메모리
-#     32*0.55/50799 = 363KB
-# 400,000 리플레이시 필요한 메모리 (강화학습 책)
-#     32*0.55/50799*400000 = 139GB
-# 80,000 리플레이시 필요한 메모리
-#     32*0.55/50799*80000 = 27GB
-
+#     57KB 정도
 # 케라스 강화학습 책 코드
-# MAX_REPLAY = 400000  # 약 139GB 메모리 필요
-# TRAIN_START = 50000
-MAX_REPLAY = 40000  # 약 14GB 메모리 필요
-TRAIN_START = 20000
+# MAX_REPLAY = 400000  # 약 22GB 메모리 필요
+MAX_REPLAY = 200000  # 약 11GB 메모리 필요
 
 writer = SummaryWriter()
 
@@ -96,10 +90,15 @@ class DQNAgent:
                                        lr=LEARNING_RATE)
 
     def get_action(self, history):
-        """이력을 입력으로 모델에서 동작을 예측하거나 eps로 탐험."""
+        """이력을 입력으로 모델에서 동작을 예측하거나 eps로 탐험.
+
+        Args:
+            history: byte 형 이력
+        """
         if np.random.randn() <= self.eps:
             return random.randrange(ACTION_SIZE)
         else:
+            history = np.float32(history / 255.)
             q_val = self.net(history)
             action = int(q_val[0].max(0)[1])
             return action
@@ -121,7 +120,11 @@ class DQNAgent:
             return 3
 
     def append_sample(self, history, action, reward, next_history, dead):
-        """플레이 이력을 추가."""
+        """플레이 이력을 추가.
+
+        Args:
+            history: byte 형 이력
+        """
         self.memory.append((history, action, reward, next_history, dead))
 
     def train_model(self):
@@ -142,8 +145,8 @@ class DQNAgent:
         # 모든 샘플에 대해
         for i in range(BATCH_SIZE):
             sample = mini_batch[i]
-            histories[i] = sample[0]
-            next_histories[i] = sample[3]
+            histories[i] = np.float32(sample[0] / 255.)
+            next_histories[i] = np.float32(sample[3] / 255.)
             actions.append(sample[1])
             rewards.append(sample[2])
             deads.append(sample[4])
@@ -193,11 +196,15 @@ def init_env():
 
 
 def pre_processing(observe):
-    """관측 이미지 전처리."""
+    """관측 이미지 전처리.
+
+    이미지는 byte 형으로 변환하여 반환
+    """
     state = observe[CLIP_TOP:, :, :]
     state = state[:-CLIP_BOTTOM, :, :]
     state = resize(rgb2gray(state), (TRAIN_IMAGE_SIZE, TRAIN_IMAGE_SIZE),
                    mode='constant')
+    state = np.uint8(state) * 255
     # from scipy import misc
     # misc.imsave('clipped.png', state)
     return state
@@ -252,7 +259,7 @@ def train():
             next_history = np.append(next_state, history[:, :3, :, :], axis=1)
 
             # Q값을 예측
-            r = agent.net(history)[0]
+            r = agent.net(np.float32(history / 255.))[0]
             agent.avg_q_max += float(r[0].max())
             agent.avg_reward += reward
 
