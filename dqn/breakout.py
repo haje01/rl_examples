@@ -4,6 +4,7 @@ import sys
 import random
 import time
 from collections import deque
+import gc
 
 import psutil
 import numpy as np
@@ -312,6 +313,7 @@ def train():
                 #       format(size * len(agent.memory) / 1024. / 1024.))
                 agent.avg_reward, agent.avg_q_max, agent.avg_loss, step = \
                     0, 0, 0, 0
+                gc.collect()
 
                 # 모델 저장
                 if e % SAVE_FREQ == 0:
