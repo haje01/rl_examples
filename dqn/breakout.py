@@ -45,8 +45,7 @@ GIGA = pow(2, 30)
 #     57KB 정도
 # 케라스 강화학습 책 코드
 # MAX_REPLAY = 400000  # 약 22GB 메모리 필요
-# TRAIN_START = 50000
-MAX_REPLAY = 200000  # 약 11GB 메모리 필요
+MAX_REPLAY = 300000  # 약 16GB 메모리 필요
 
 writer = SummaryWriter()
 
@@ -182,6 +181,7 @@ class DQNAgent:
         targets = Variable(torch.from_numpy(targets)).float()
 
         # 모델과 타겟 모델에서 예측한 Q밸류의 차이가 손실
+        self.optimizer.zero_grad()
         loss = F.smooth_l1_loss(q_values, targets, size_average=False)
         loss.backward()
         self.optimizer.step()
