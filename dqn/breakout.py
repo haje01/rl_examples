@@ -4,7 +4,6 @@ import sys
 import random
 import time
 from collections import deque
-import gc
 
 import psutil
 import numpy as np
@@ -35,7 +34,8 @@ UPDATE_TARGET_FREQ = 10000
 BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
-LEARNING_RATE = 5e-5
+LEARNING_RATE = 0.00025
+OPTIM_EPS = 0.01
 SAVE_FREQ = 300
 TRAIN_START = 50000
 EXPLORE_STEPS = 100000
@@ -47,7 +47,15 @@ GIGA = pow(2, 30)
 # MAX_REPLAY = 400000  # 약 22GB 메모리 필요
 MAX_REPLAY = 300000  # 약 16GB 메모리 필요
 
+cuda_avail = torch.cuda.is_available()
 writer = SummaryWriter()
+
+
+def variable(t, **kwargs):
+    """CUDA 가능 여부에 대응해 변수 생성."""
+    if cuda_avail:
+        t = t.cuda()
+    return Variable(t, **kwargs)
 
 
 class DQN(nn.Module):
@@ -64,7 +72,7 @@ class DQN(nn.Module):
 
     def forward(self, state):
         """전방 연쇄."""
-        x = Variable(torch.FloatTensor(state))
+        x = variable(torch.FloatTensor(state))
         # PyTorch 입력은 Batch, Channel, Height, Width 를 가정
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
@@ -83,6 +91,9 @@ class DQNAgent:
         """초기화."""
         self.net = DQN(action_size=ACTION_SIZE)
         self.target_net = DQN(action_size=ACTION_SIZE)
+        if cuda_avail:
+            self.net = self.net.cuda()
+            self.target_net = self.target_net.cuda()
         self.update_target_net()
         self.eps = 1.0
         self.eps_start, self.eps_end = 1.0, 0.1
@@ -90,7 +101,7 @@ class DQNAgent:
         self.memory = deque(maxlen=MAX_REPLAY)
         self.avg_q_max, self.avg_loss, self.avg_reward = 0, 0, 0
         self.optimizer = optim.RMSprop(params=self.net.parameters(),
-                                       lr=LEARNING_RATE)
+                                       lr=LEARNING_RATE, eps=OPTIM_EPS)
         self.replay_buf_size = 0
 
     def get_action(self, history):
@@ -165,7 +176,7 @@ class DQNAgent:
         # 모델에서 이번 이력의 동작 가치를 예측
         actions = torch.LongTensor(actions).unsqueeze(1)
         # 이력으로 동작 가치(Q) 배열 예측 후, 동작을 인덱스로 동작 가치를 얻음
-        q_values = self.net(histories).gather(1, Variable(actions))
+        q_values = self.net(histories).gather(1, variable(actions))
 
         # 타겟 모델에서 다음 이력에 대한 동작 가치를 예측한 후, 최대값을 타겟 밸류로
         # (Q-Learning update)
@@ -178,7 +189,7 @@ class DQNAgent:
                 targets[i] = rewards[i]
             else:
                 targets[i] = rewards[i] + DISCOUNT_FACTOR * target_values[i]
-        targets = Variable(torch.from_numpy(targets)).float()
+        targets = variable(torch.from_numpy(targets)).float()
 
         # 모델과 타겟 모델에서 예측한 Q밸류의 차이가 손실
         self.optimizer.zero_grad()
