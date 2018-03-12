@@ -4,7 +4,6 @@ import sys
 import random
 import time
 from collections import deque
-import gc
 
 import psutil
 import numpy as np
@@ -14,14 +13,17 @@ from torch import nn
 from torch.autograd import Variable
 from torch.nn import functional as F  # NOQA
 from torch import optim
+import torch.multiprocessing as mp
 from skimage.color import rgb2gray
 from skimage.transform import resize
 from tensorboardX import SummaryWriter
 
 
 TRAIN = True
-LOAD_MODEL = "breakout_700.pth"
-RENDER = True
+ENV_ID = 'breakout'
+ENV_NAME = 'BreakoutDeterministic-v4'
+LOAD_MODEL = "{}_700.pth".format(ENV_ID)
+RENDER = False
 ACTION_SIZE = 3
 RENDER_SX = 160
 RENDER_SY = 210
@@ -35,17 +37,20 @@ UPDATE_TARGET_FREQ = 10000
 BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
-LEARNING_RATE = 5e-5
+LEARNING_RATE = 0.0001
 SAVE_FREQ = 300
-TRAIN_START = 50000
+TRAIN_START = 500
 EXPLORE_STEPS = 100000
+OPTIM_EPS = 0.01
+EPS_START = 1.0
+EPS_END = 0.02
 GIGA = pow(2, 30)
 
 # 리플레이 당 필요한 메모리
 #     57KB 정도
 # 케라스 강화학습 책 코드
 # MAX_REPLAY = 400000  # 약 22GB 메모리 필요
-MAX_REPLAY = 300000  # 약 16GB 메모리 필요
+MAX_REPLAY = 100000  # 약 16GB 메모리 필요
 
 writer = SummaryWriter()
 
@@ -79,18 +84,20 @@ class DQN(nn.Module):
 class DQNAgent:
     """에이전트."""
 
-    def __init__(self):
+    def __init__(self, env):
         """초기화."""
         self.net = DQN(action_size=ACTION_SIZE)
+        self.env = env
         self.target_net = DQN(action_size=ACTION_SIZE)
         self.update_target_net()
-        self.eps = 1.0
-        self.eps_start, self.eps_end = 1.0, 0.1
+        self.eps = EPS_START
+        self.eps_start, self.eps_end = EPS_START, EPS_END
         self.eps_decay = (self.eps_start - self.eps_end) / EXPLORE_STEPS
         self.memory = deque(maxlen=MAX_REPLAY)
         self.avg_q_max, self.avg_loss, self.avg_reward = 0, 0, 0
-        self.optimizer = optim.RMSprop(params=self.net.parameters(),
-                                       lr=LEARNING_RATE)
+        # self.optimizer = optim.RMSprop(params=self.net.parameters(),
+        #                                lr=LEARNING_RATE, eps=OPTIM_EPS)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=LEARNING_RATE)
         self.replay_buf_size = 0
 
     def get_action(self, history):
@@ -195,7 +202,7 @@ def init_env():
     # Deterministic: 프레임을 고정 값(3 or 4)로 스킵
     # v0: 이전 동작을 20% 확률로 반복
     # v4: 이전 동작을 반복하지 않음
-    env = gym.make('BreakoutDeterministic-v4')
+    env = gym.make(ENV_NAME)
     env.reset()
     if RENDER:
         env.render()
@@ -219,16 +226,13 @@ def pre_processing(observe):
     return state
 
 
-def train():
-    """학습."""
-    env = init_env()
-    agent = DQNAgent()
-    global_step = 0
-
+def play_func(agent, exp_queue):
+    """플레이 프로세스 함수."""
+    env = agent.env
     for e in range(1, NUM_EPISODE + 1):
         env.reset()
         dead = False
-        step, score, start_life = 0, 0, 5
+        start_life = 5
 
         # 처음 30 스텝 스킵
         for i in range(NO_OP_STEPS):
@@ -242,14 +246,6 @@ def train():
 
         done = False
         while not done:
-            if RENDER:
-                env.render()
-            if len(agent.memory) < TRAIN_START and global_step % 500 == 0:
-                print("filling replay buffer: {:.2f}".
-                      format(len(agent.memory) / float(TRAIN_START)))
-            global_step += 1
-            step += 1
-
             state = pre_processing(observe)
             action = agent.get_action(history)
             raction = agent.get_real_action(action)
@@ -262,13 +258,48 @@ def train():
 
             # Q값을 예측
             r = agent.net(np.float32(history / 255.))[0]
-            agent.avg_q_max += float(r[0].max())
-            agent.avg_reward += reward
+            qmax = r.data.numpy().max()
 
             # 죽은 경우 처리
             if start_life > info['ale.lives']:
                 dead = True
                 start_life = info['ale.lives']
+
+            exp_queue.put((history, action, reward, next_history, dead,
+                           done, e, qmax))
+
+            if dead:
+                dead = False
+            else:
+                history = next_history
+
+    exp_queue.put(None)
+
+
+def train():
+    """학습."""
+    env = init_env()
+    agent = DQNAgent(env)
+    exp_queue = mp.Queue(maxsize=2)
+    play_proc = mp.Process(target=play_func, args=(agent, exp_queue))
+    play_proc.start()
+
+    global_step = step = 0
+
+    epstart = None
+    while play_proc.is_alive():
+        history, action, reward, next_history, dead, done, e, qmax = \
+            exp_queue.get()
+        agent.avg_q_max += qmax
+        agent.avg_reward += reward
+
+        if not done:
+            step += 1
+            global_step += 1
+
+            if len(agent.memory) < TRAIN_START and global_step % 500 == 0:
+                print("filling replay buffer: {:.2f}".
+                      format(len(agent.memory) / float(TRAIN_START)))
 
             agent.append_sample(history, action, reward, next_history, dead)
             if len(agent.memory) >= TRAIN_START:
@@ -278,51 +309,55 @@ def train():
             if global_step % UPDATE_TARGET_FREQ == 0:
                 agent.update_target_net()
 
-            if dead:
-                dead = False
-            else:
-                history = next_history
+            # 저장
+            # save_state = history[0]
+            # from scipy import misc
+            # misc.imsave('save.png', save_history.reshape(4*84, 84))
 
-            if done:
-                if len(agent.memory) > TRAIN_START:
-                    # 학습 패러미터
-                    writer.add_scalar('data/reward',
-                                      agent.avg_reward, e)
-                    writer.add_scalar('data/loss', agent.avg_loss /
-                                      float(step), e)
-                    writer.add_scalar('data/qmax', agent.avg_q_max /
-                                      float(step), e)
-                    writer.add_scalar('data/step', step, e)
-                    writer.add_scalar('data/eps', agent.eps, e)
+        else:
+            if epstart is not None:
+                elapsed = time.time() - epstart
+            epstart = time.time()
 
-                # 메모리 관련 패러미터
-                vmem = psutil.virtual_memory()
-                total = vmem.total / GIGA
-                avail = vmem.available / GIGA
-                perc = vmem.percent
-                free = vmem.free / GIGA
-                print("Episode: {} - replay: {}, memory available: {:.1f}GB, "
-                      "percent: {:.1f}%, free: {:.1f}GB".
-                      format(e, len(agent.memory), avail, perc, free))
-                writer.add_scalars('data/memory',
-                                   {'total': total, 'avail': avail,
-                                    'free': free,
-                                    'replay': agent.replay_buf_size}, e)
-                size = sum([sys.getsizeof(i) for i in agent.memory[-1]])
-                agent.replay_buf_size = size * len(agent.memory) / GIGA
-                # writer.add_scalar('mem/replay', size * len(agent.memory), e)
-                # print("replay buffer size: {:.1f}MB".
-                #       format(size * len(agent.memory) / 1024. / 1024.))
-                agent.avg_reward, agent.avg_q_max, agent.avg_loss, step = \
-                    0, 0, 0, 0
+            if len(agent.memory) > TRAIN_START:
+                # 기록
+                writer.add_scalar('data/reward',
+                                  agent.avg_reward, e)
+                writer.add_scalar('data/loss', agent.avg_loss /
+                                  float(step), e)
+                print("1 {}".format(agent.avg_q_max))
+                writer.add_scalar('data/qmax', agent.avg_q_max /
+                                  float(step), e)
+                writer.add_scalar('data/step', step, e)
+                writer.add_scalar('data/eps', agent.eps, e)
+                writer.add_scalar('data/elapse', elapsed, e)
 
-                # 모델 저장
-                if e % SAVE_FREQ == 0:
-                    path = "breakout_{}.pth".format(e)
-                    torch.save(agent.net.state_dict(), path)
-                    print("saved: {}".format(path))
+            # 메모리 관련 패러미터
+            vmem = psutil.virtual_memory()
+            total = vmem.total / GIGA
+            avail = vmem.available / GIGA
+            perc = vmem.percent
+            free = vmem.free / GIGA
+            print("Episode: {} - replay: {}, memory available: {:.1f}GB, "
+                  "percent: {:.1f}%, free: {:.1f}GB".
+                  format(e, len(agent.memory), avail, perc, free))
+            writer.add_scalars('data/memory',
+                               {'total': total, 'avail': avail,
+                                'free': free,
+                                'replay': agent.replay_buf_size}, e)
+            size = sum([sys.getsizeof(i) for i in agent.memory[-1]])
+            agent.replay_buf_size = size * len(agent.memory) / GIGA
+            # writer.add_scalar('mem/replay', size * len(agent.memory), e)
+            # print("replay buffer size: {:.1f}MB".
+            #       format(size * len(agent.memory) / 1024. / 1024.))
+            agent.avg_reward, agent.avg_q_max, agent.avg_loss, step = \
+                0, 0, 0, 0
 
-            score += reward
+            # 모델 저장
+            if e % SAVE_FREQ == 0:
+                path = "{}_{}.pth".format(ENV_ID, e)
+                torch.save(agent.net.state_dict(), path)
+                print("saved: {}".format(path))
 
 
 def play():
@@ -335,7 +370,7 @@ def play():
     while True:
         observe = env.reset()
         dead = False
-        step, score, start_life = 0, 0, 5
+        step, start_life = 0, 5
 
         state = pre_processing(observe)
         # 최초는 동일한 4 프레임을 쌓음
@@ -357,12 +392,6 @@ def play():
             raction = agent.get_real_action(action)
             observe, reward, done, info = env.step(raction)
             next_state = pre_processing(observe)
-            # # 저장
-            # save_state = np.reshape([next_state], (1, 84, 84))
-            # save_history = np.append(save_state, save_history[:3, :, :],
-            #                          axis=0)
-            # from scipy import misc
-            # misc.imsave('save.png', save_history.reshape(4*84, 84))
 
             # 배치가 포함된 형태로 변형
             next_state = np.reshape([next_state], (1, 1, 84, 84))
@@ -381,7 +410,6 @@ def play():
             else:
                 history = next_history
 
-            score += reward
 
 if __name__ == '__main__':
     if TRAIN:
