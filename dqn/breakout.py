@@ -37,7 +37,7 @@ DISCOUNT_FACTOR = 0.99
 LEARNING_RATE = 0.00025
 OPTIM_EPS = 0.01
 SAVE_FREQ = 300
-TRAIN_START = 50000
+TRAIN_START = 500
 EXPLORE_STEPS = 100000
 GIGA = pow(2, 30)
 
@@ -120,7 +120,7 @@ class DQNAgent:
         else:
             history = np.float32(history / 255.)
             q_val = self.net(history)
-            action = int(np.argmax(q_val.data.numpy()))
+            action = int(np.argmax(q_val.data.cpu().numpy()))
             return action
 
     def update_target_net(self):
@@ -182,7 +182,8 @@ class DQNAgent:
 
         # 타겟 모델에서 다음 이력에 대한 동작 가치를 예측한 후, 최대값을 타겟 밸류로
         # (Q-Learning update)
-        target_values = self.target_net(next_histories).data.numpy().max(1)
+        target_values = self.target_net(next_histories).data.cpu().\
+            numpy().max(1)
 
         # 모든 버퍼 요소에 대해
         for i in range(BATCH_SIZE):
@@ -237,6 +238,8 @@ def train():
     env = init_env()
     agent = DQNAgent()
     global_step = 0
+    epstart = None
+    elapsed = 0
 
     for e in range(1, NUM_EPISODE + 1):
         env.reset()
@@ -297,6 +300,9 @@ def train():
                 history = next_history
 
             if done:
+                if epstart is not None:
+                    elapsed = time.time() - epstart
+                epstart = time.time()
                 if len(agent.memory) > TRAIN_START:
                     # 학습 패러미터
                     writer.add_scalar('data/reward',
@@ -307,6 +313,7 @@ def train():
                                       float(step), e)
                     writer.add_scalar('data/step', step, e)
                     writer.add_scalar('data/eps', agent.eps, e)
+                    writer.add_scalar('data/elapse', elapsed, e)
 
                 # 메모리 관련 패러미터
                 vmem = psutil.virtual_memory()
