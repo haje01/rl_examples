@@ -48,6 +48,8 @@ GIGA = pow(2, 30)
 MAX_REPLAY = 300000  # 약 16GB 메모리 필요
 
 cuda_avail = torch.cuda.is_available()
+if cuda_avail:
+    print("CUDA available.")
 writer = SummaryWriter()
 
 
