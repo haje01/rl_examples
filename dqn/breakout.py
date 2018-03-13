@@ -50,9 +50,19 @@ GIGA = pow(2, 30)
 #     57KB 정도
 # 케라스 강화학습 책 코드
 # MAX_REPLAY = 400000  # 약 22GB 메모리 필요
-MAX_REPLAY = 100000  # 약 16GB 메모리 필요
+MAX_REPLAY = 950000  # 약 52GB 메모리 필요
 
+cuda_avail = torch.cuda.is_available()
+if cuda_avail:
+    print("CUDA available.")
 writer = SummaryWriter()
+
+
+def variable(t, **kwargs):
+    """CUDA 가능 여부에 대응해 변수 생성."""
+    if cuda_avail:
+        t = t.cuda()
+    return Variable(t, **kwargs)
 
 
 class DQN(nn.Module):
@@ -69,7 +79,7 @@ class DQN(nn.Module):
 
     def forward(self, state):
         """전방 연쇄."""
-        x = Variable(torch.FloatTensor(state))
+        x = variable(torch.FloatTensor(state))
         # PyTorch 입력은 Batch, Channel, Height, Width 를 가정
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
@@ -89,6 +99,9 @@ class DQNAgent:
         self.net = DQN(action_size=ACTION_SIZE)
         self.env = env
         self.target_net = DQN(action_size=ACTION_SIZE)
+        if cuda_avail:
+            self.net = self.net.cuda()
+            self.target_net = self.target_net.cuda()
         self.update_target_net()
         self.eps = EPS_START
         self.eps_start, self.eps_end = EPS_START, EPS_END
@@ -114,7 +127,7 @@ class DQNAgent:
         else:
             history = np.float32(history / 255.)
             q_val = self.net(history)
-            action = int(np.argmax(q_val.data.numpy()))
+            action = int(np.argmax(q_val.data.cpu().numpy()))
             return action
 
     def update_target_net(self):
@@ -172,11 +185,11 @@ class DQNAgent:
         # 모델에서 이번 이력의 동작 가치를 예측
         actions = torch.LongTensor(actions).unsqueeze(1)
         # 이력으로 동작 가치(Q) 배열 예측 후, 동작을 인덱스로 동작 가치를 얻음
-        q_values = self.net(histories).gather(1, Variable(actions))
+        q_values = self.net(histories).gather(1, variable(actions))
 
         # 타겟 모델에서 다음 이력에 대한 동작 가치를 예측한 후, 최대값을 타겟 밸류로
         # (Q-Learning update)
-        target_values = self.target_net(next_histories).data.numpy().max(1)
+        target_values = self.target_net(next_histories).max(1)[0]
 
         # 모든 버퍼 요소에 대해
         for i in range(BATCH_SIZE):
@@ -185,7 +198,7 @@ class DQNAgent:
                 targets[i] = rewards[i]
             else:
                 targets[i] = rewards[i] + DISCOUNT_FACTOR * target_values[i]
-        targets = Variable(torch.from_numpy(targets)).float()
+        targets = variable(torch.from_numpy(targets)).float()
 
         # 모델과 타겟 모델에서 예측한 Q밸류의 차이가 손실
         self.optimizer.zero_grad()
@@ -258,7 +271,7 @@ def play_func(agent, exp_queue):
 
             # Q값을 예측
             r = agent.net(np.float32(history / 255.))[0]
-            qmax = r.data.numpy().max()
+            qmax = r.data.cpu().numpy().max()
 
             # 죽은 경우 처리
             if start_life > info['ale.lives']:
@@ -278,6 +291,7 @@ def play_func(agent, exp_queue):
 
 def train():
     """학습."""
+    mp.set_start_method('spawn')
     env = init_env()
     agent = DQNAgent(env)
     exp_queue = mp.Queue(maxsize=2)
