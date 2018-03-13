@@ -34,17 +34,17 @@ UPDATE_TARGET_FREQ = 10000
 BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
-LEARNING_RATE = 0.00025
+LEARNING_RATE = 0.0001
 OPTIM_EPS = 0.01
 SAVE_FREQ = 300
-TRAIN_START = 500
+TRAIN_START = 50000
 EXPLORE_STEPS = 100000
 GIGA = pow(2, 30)
 
 # 리플레이 당 필요한 메모리
 #     57KB 정도
 # 케라스 강화학습 책 코드
-# MAX_REPLAY = 400000  # 약 22GB 메모리 필요
+# MAX_REPLAY = 9500000  # 약 52GB 메모리 필요
 MAX_REPLAY = 300000  # 약 16GB 메모리 필요
 
 cuda_avail = torch.cuda.is_available()
@@ -102,8 +102,8 @@ class DQNAgent:
         self.eps_decay = (self.eps_start - self.eps_end) / EXPLORE_STEPS
         self.memory = deque(maxlen=MAX_REPLAY)
         self.avg_q_max, self.avg_loss, self.avg_reward = 0, 0, 0
-        self.optimizer = optim.RMSprop(params=self.net.parameters(),
-                                       lr=LEARNING_RATE, eps=OPTIM_EPS)
+        self.optimizer = optim.Adam(params=self.net.parameters(),
+                                    lr=LEARNING_RATE)
         self.replay_buf_size = 0
 
     def get_action(self, history):
