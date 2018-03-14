@@ -34,11 +34,11 @@ UPDATE_TARGET_FREQ = 10000
 BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 0.00025
 OPTIM_EPS = 0.01
 SAVE_FREQ = 300
 TRAIN_START = 50000
-EXPLORE_STEPS = 100000
+EXPLORE_STEPS = 1000000
 GIGA = pow(2, 30)
 
 # 리플레이 당 필요한 메모리
@@ -102,8 +102,8 @@ class DQNAgent:
         self.eps_decay = (self.eps_start - self.eps_end) / EXPLORE_STEPS
         self.memory = deque(maxlen=MAX_REPLAY)
         self.avg_q_max, self.avg_loss, self.avg_reward = 0, 0, 0
-        self.optimizer = optim.Adam(params=self.net.parameters(),
-                                    lr=LEARNING_RATE)
+        self.optimizer = optim.RMSprop(params=self.net.parameters(),
+                                       lr=LEARNING_RATE, eps=OPTIM_EPS)
         self.replay_buf_size = 0
 
     def get_action(self, history):
@@ -377,7 +377,7 @@ def play():
             raction = agent.get_real_action(action)
             observe, reward, done, info = env.step(raction)
             next_state = pre_processing(observe)
-            # # 저장
+            # 저장
             # save_state = np.reshape([next_state], (1, 84, 84))
             # save_history = np.append(save_state, save_history[:3, :, :],
             #                          axis=0)
