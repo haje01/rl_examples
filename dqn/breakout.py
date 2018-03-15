@@ -44,7 +44,7 @@ GIGA = pow(2, 30)
 # 리플레이 당 필요한 메모리
 #     57KB 정도
 # 케라스 강화학습 책 코드
-# MAX_REPLAY = 9500000  # 약 52GB 메모리 필요
+# MAX_REPLAY = 1000000  # 약 54GB 메모리 필요
 MAX_REPLAY = 300000  # 약 16GB 메모리 필요
 
 cuda_avail = torch.cuda.is_available()
