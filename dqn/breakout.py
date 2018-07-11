@@ -12,23 +12,23 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 from torch.nn import functional as F  # NOQA
+import torchvision.transforms as T  # NOQA
 from torch import optim
-from skimage.color import rgb2gray
-from skimage.transform import resize
 from tensorboardX import SummaryWriter
+from PIL import Image
 
 
 TRAIN = True
 LOAD_MODEL = "breakout_700.pth"
 RENDER = True
-ACTION_SIZE = 3
 RENDER_SX = 160
 RENDER_SY = 210
 ACTION_SIZE = 3
 NUM_EPISODE = 50000
 NO_OP_STEPS = 30
-CLIP_TOP = 32
-CLIP_BOTTOM = 18
+CLIP_TOP = 37
+CLIP_BOTTOM = 16
+CLIP_HORZ = 8
 TRAIN_IMAGE_SIZE = 84
 UPDATE_TARGET_FREQ = 10000
 BATCH_SIZE = 32
@@ -51,6 +51,15 @@ cuda_avail = torch.cuda.is_available()
 if cuda_avail:
     print("CUDA available.")
 writer = SummaryWriter()
+
+
+resize = T.Compose([
+                   T.ToPILImage(),
+                   T.Grayscale(),
+                   T.Resize((TRAIN_IMAGE_SIZE, TRAIN_IMAGE_SIZE),
+                            interpolation=Image.CUBIC),
+                   T.ToTensor()
+                   ])
 
 
 def variable(t, **kwargs):
@@ -116,12 +125,16 @@ class DQNAgent:
             0: 정지, 1: 오른쪽, 2: 왼쪽
         """
         if np.random.randn() <= self.eps:
-            return random.randrange(ACTION_SIZE)
+            return self.get_random_action()
         else:
             history = np.float32(history / 255.)
             q_val = self.net(history)
             action = int(np.argmax(q_val.data.cpu().numpy()))
             return action
+
+    def get_random_action(self):
+        """임의 행동."""
+        return random.randrange(ACTION_SIZE)
 
     def update_target_net(self):
         """타겟 네트웍 갱신."""
@@ -195,11 +208,14 @@ class DQNAgent:
         targets = variable(torch.from_numpy(targets)).float()
 
         # 모델과 타겟 모델에서 예측한 Q밸류의 차이가 손실
+        # (Hubber 손실)
+        loss = F.smooth_l1_loss(q_values, targets.unsqueeze(1))
         self.optimizer.zero_grad()
-        loss = F.smooth_l1_loss(q_values, targets, size_average=False)
         loss.backward()
+        for param in self.net.parameters():
+            param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
-        loss = loss.data[0]  # loss[0]으로 하면 Variable을 리턴!
+        loss = loss.item()  # loss[0]으로 하면 Variable을 리턴!
         self.avg_loss += loss
         return loss
 
@@ -209,8 +225,8 @@ def init_env():
     # Deterministic: 프레임을 고정 값(3 or 4)로 스킵
     # v0: 이전 동작을 20% 확률로 반복
     # v4: 이전 동작을 반복하지 않음
-    # env = gym.make('BreakoutDeterministic-v4')
-    env = gym.make('BreakoutNoFrameskip-v4')
+    env = gym.make('BreakoutDeterministic-v4')
+    # env = gym.make('BreakoutNoFrameskip-v4')
     env.reset()
     if RENDER:
         env.render()
@@ -224,13 +240,12 @@ def pre_processing(observe):
 
     이미지는 byte 형으로 변환하여 반환
     """
-    state = observe[CLIP_TOP:, :, :]
+    state = observe[CLIP_TOP:, CLIP_HORZ:-CLIP_HORZ, :]
     state = state[:-CLIP_BOTTOM, :, :]
-    state = resize(rgb2gray(state), (TRAIN_IMAGE_SIZE, TRAIN_IMAGE_SIZE),
-                   mode='constant')
+    state = resize(state)
     state = np.uint8(state * 255)
     # from scipy import misc
-    # misc.imsave('clipped.png', state)
+    # misc.imsave('clipped.png', state.squeeze(0))
     return state
 
 
@@ -254,7 +269,7 @@ def train():
         state = pre_processing(observe)
         # 최초는 동일한 4 프레임을 쌓음
         history = np.stack((state, state, state, state), axis=0)
-        # batch, width, height, frames
+        # batch, frames, width, height
         history = np.reshape([history], (1, 4, 84, 84))
 
         done = False
@@ -262,14 +277,18 @@ def train():
         while not done:
             if RENDER:
                 env.render()
-            if len(agent.memory) < TRAIN_START and global_step % 500 == 0:
-                print("filling replay buffer: {:.2f}".
-                      format(len(agent.memory) / float(TRAIN_START)))
+
             global_step += 1
             step += 1
 
-            state = pre_processing(observe)
-            action = agent.get_action(history)
+            if len(agent.memory) < TRAIN_START:
+                if global_step % 500 == 0:
+                    print("filling replay buffer: {:.2f}".
+                          format(len(agent.memory) / float(TRAIN_START)))
+                action = agent.get_random_action()
+            else:
+                action = agent.get_action(history)
+
             raction = agent.get_real_action(action)
             observe, reward, done, info = env.step(raction)
             next_state = pre_processing(observe)
@@ -293,6 +312,7 @@ def train():
             if start_life > info['ale.lives']:
                 dead = True
                 start_life = info['ale.lives']
+            reward = np.clip(reward, -1., 1.)
 
             agent.append_sample(history, action, reward, next_history, dead)
             if len(agent.memory) >= TRAIN_START:
@@ -300,6 +320,7 @@ def train():
 
             # 일정 시간마다 타겟 모델을 모델의 가중치로 업데이트
             if global_step % UPDATE_TARGET_FREQ == 0:
+                print("update target")
                 agent.update_target_net()
 
             if dead:
