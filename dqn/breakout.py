@@ -1,4 +1,4 @@
-# -#- coding: utf8 -*-
+# -*- coding: utf8 -*-
 """Breakout을 DQN으로."""
 import sys
 import random
