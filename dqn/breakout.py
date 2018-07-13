@@ -14,6 +14,7 @@ from torch.autograd import Variable
 from torch.nn import functional as F  # NOQA
 import torchvision.transforms as T  # NOQA
 from torch import optim
+from torch.nn.init import xavier_uniform
 from tensorboardX import SummaryWriter
 from PIL import Image
 
@@ -31,11 +32,13 @@ CLIP_BOTTOM = 16
 CLIP_HORZ = 8
 TRAIN_IMAGE_SIZE = 84
 UPDATE_TARGET_FREQ = 10000
-BATCH_SIZE = 32
+BATCH_SIZE = 64  # 32 -> 64로 시도
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
-LEARNING_RATE = 0.00025
+OPTIM_LR = 0.001  # BN과 Gradient Clip으로 0.00025 -> 0.001로 늘려봄
+OPTIM_ALPHA = 0.95
 OPTIM_EPS = 0.01
+EGREEDY_END_EPS = 0.02  # 0.1 -> 0.02로 시도
 SAVE_FREQ = 300
 TRAIN_START = 50000
 EXPLORE_STEPS = 1000000
@@ -47,11 +50,12 @@ GIGA = pow(2, 30)
 # MAX_REPLAY = 1000000  # 약 54GB 메모리 필요
 MAX_REPLAY = 300000  # 약 16GB 메모리 필요
 
+random.seed(0)
+
 cuda_avail = torch.cuda.is_available()
 if cuda_avail:
     print("CUDA available.")
 writer = SummaryWriter()
-
 
 resize = T.Compose([
                    T.ToPILImage(),
@@ -76,8 +80,11 @@ class DQN(nn.Module):
         """init."""
         super(DQN, self).__init__()
         self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
+        self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.bn2 = nn.BatchNorm2d(64)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.bn3 = nn.BatchNorm2d(64)
         self.fc1 = nn.Linear(64 * 7 * 7, 512)
         self.fc2 = nn.Linear(512, ACTION_SIZE)
 
@@ -85,9 +92,9 @@ class DQN(nn.Module):
         """전방 연쇄."""
         x = variable(torch.FloatTensor(state))
         # PyTorch 입력은 Batch, Channel, Height, Width 를 가정
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
         # 첫 번째 배치 사이즈는 그대로 이용하고, 나머지는 as is로 flatten
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
@@ -96,24 +103,33 @@ class DQN(nn.Module):
 
 
 class DQNAgent:
-    """에이전트."""
+    """DQN 에이전트."""
 
     def __init__(self):
         """초기화."""
         self.net = DQN(action_size=ACTION_SIZE)
+        self.net.apply(self.weights_init)
         self.target_net = DQN(action_size=ACTION_SIZE)
         if cuda_avail:
             self.net = self.net.cuda()
             self.target_net = self.target_net.cuda()
         self.update_target_net()
         self.eps = 1.0
-        self.eps_start, self.eps_end = 1.0, 0.1
+        self.eps_start, self.eps_end = 1.0, EGREEDY_END_EPS
         self.eps_decay = (self.eps_start - self.eps_end) / EXPLORE_STEPS
         self.memory = deque(maxlen=MAX_REPLAY)
         self.avg_q_max, self.avg_loss, self.avg_reward = 0, 0, 0
-        self.optimizer = optim.RMSprop(params=self.net.parameters(),
-                                       lr=LEARNING_RATE, eps=OPTIM_EPS)
+        # self.optimizer = optim.RMSprop(params=self.net.parameters(),
+        #                                lr=OPTIM_LR, alpha=OPTIM_ALPHA,
+        #                                eps=OPTIM_EPS)
+        self.optimizer = optim.Adam(params=self.net.parameters(),
+                                    lr=OPTIM_LR)
         self.replay_buf_size = 0
+
+    def weights_init(self, m):
+        """가중치 xavier 초기화."""
+        if isinstance(m, nn.Conv2d):
+            xavier_uniform(m.weight.data)
 
     def get_action(self, history):
         """이력을 입력으로 모델에서 동작을 예측하거나 eps로 탐험.
@@ -212,6 +228,7 @@ class DQNAgent:
         loss = F.smooth_l1_loss(q_values, targets.unsqueeze(1))
         self.optimizer.zero_grad()
         loss.backward()
+        # Gradient Exploding에는 BN보다 Gradient Clip이 유효
         for param in self.net.parameters():
             param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
@@ -334,6 +351,7 @@ def train():
                 epstart = time.time()
                 if len(agent.memory) > TRAIN_START:
                     # 학습 패러미터
+                    # TODO: e -> global_step으로 바꾸기
                     writer.add_scalar('data/reward',
                                       agent.avg_reward, e)
                     writer.add_scalar('data/loss', agent.avg_loss /
