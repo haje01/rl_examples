@@ -21,7 +21,7 @@ from PIL import Image
 
 TRAIN = True
 LOAD_MODEL = "breakout_700.pth"
-RENDER = False
+RENDER = True
 RENDER_SX = 160
 RENDER_SY = 210
 ACTION_SIZE = 3
@@ -277,7 +277,7 @@ def train():
     for e in range(1, NUM_EPISODE + 1):
         env.reset()
         dead = False
-        step, start_life = 0, 0, 5
+        step, start_life = 0, 5
 
         # 처음 30 스텝 스킵
         for i in range(NO_OP_STEPS):

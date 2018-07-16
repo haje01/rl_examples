@@ -277,7 +277,7 @@ def train():
     for e in range(1, NUM_EPISODE + 1):
         env.reset()
         dead = False
-        step, start_life = 0, 0, 5
+        step, start_life = 0, 5
 
         # 처음 30 스텝 스킵
         for i in range(NO_OP_STEPS):
