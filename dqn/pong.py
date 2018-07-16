@@ -21,36 +21,32 @@ from PIL import Image
 
 TRAIN = True
 LOAD_MODEL = "breakout_700.pth"
-RENDER = True
+RENDER = False
 RENDER_SX = 160
 RENDER_SY = 210
 ACTION_SIZE = 3
 NUM_EPISODE = 50000
 NO_OP_STEPS = 30
-CLIP_TOP = 37
-CLIP_BOTTOM = 16
-CLIP_HORZ = 8
+CLIP_TOP = 35
+CLIP_BOTTOM = 18
+CLIP_HORZ = 3
 TRAIN_IMAGE_SIZE = 84
-UPDATE_TARGET_FREQ = 10000
+UPDATE_TARGET_FREQ = 1000
 BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
-OPTIM_LR = 0.00025
+OPTIM_LR = 0.0001
 OPTIM_ALPHA = 0.95
-OPTIM_EPS = 0.01
-EGREEDY_END_EPS = 0.1
+OPTIM_EPS = 0.02
+EGREEDY_END_EPS = 0.02  # 0.1 -> 0.02로 시도
 SAVE_FREQ = 300
-TRAIN_START = 50000
-EXPLORE_STEPS = 1000000
-STOP_REWARD = 300
+TRAIN_START = 10000
+EXPLORE_STEPS = 100000
+STOP_REWARD = 18
 
 GIGA = pow(2, 30)
 
-# 리플레이 당 필요한 메모리
-#     57KB 정도
-# 케라스 강화학습 책 코드
-# MAX_REPLAY = 1000000  # 약 54GB 메모리 필요
-MAX_REPLAY = 300000  # 약 16GB 메모리 필요
+MAX_REPLAY = 100000
 
 random.seed(0)
 
@@ -121,9 +117,11 @@ class DQNAgent:
         self.eps_decay = (self.eps_start - self.eps_end) / EXPLORE_STEPS
         self.memory = deque(maxlen=MAX_REPLAY)
         self.avg_q_max, self.avg_loss, self.avg_reward = 0, 0, 0
-        self.optimizer = optim.RMSprop(params=self.net.parameters(),
-                                       lr=OPTIM_LR, alpha=OPTIM_ALPHA,
-                                       eps=OPTIM_EPS)
+        # self.optimizer = optim.RMSprop(params=self.net.parameters(),
+        #                                lr=OPTIM_LR, alpha=OPTIM_ALPHA,
+        #                                eps=OPTIM_EPS)
+        self.optimizer = optim.Adam(params=self.net.parameters(),
+                                    lr=OPTIM_LR)
         self.replay_buf_size = 0
 
     def weights_init(self, m):
@@ -242,7 +240,9 @@ def init_env():
     # Deterministic: 프레임을 고정 값(3 or 4)로 스킵
     # v0: 이전 동작을 20% 확률로 반복
     # v4: 이전 동작을 반복하지 않음
-    env = gym.make('BreakoutDeterministic-v4')
+    # env = gym.make('PongDeterministic-v4')
+    env = gym.make('PongNoFrameskip-v4')
+    # env = gym.make('BreakoutDeterministic-v4')
     # env = gym.make('BreakoutNoFrameskip-v4')
     env.reset()
     if RENDER:
@@ -351,7 +351,6 @@ def train():
                 epstart = time.time()
                 if len(agent.memory) > TRAIN_START:
                     # 학습 패러미터
-                    # TODO: e -> global_step으로 바꾸기
                     writer.add_scalar('data/reward',
                                       agent.avg_reward, global_step)
                     writer.add_scalar('data/loss', agent.avg_loss /
@@ -377,7 +376,6 @@ def train():
                                     'replay': agent.replay_buf_size}, e)
                 size = sum([sys.getsizeof(i) for i in agent.memory[-1]])
                 agent.replay_buf_size = size * len(agent.memory) / GIGA
-
                 # 모델 저장
                 if e % SAVE_FREQ == 0:
                     path = "breakout_{}.pth".format(e)
@@ -400,7 +398,7 @@ def play():
     while True:
         observe = env.reset()
         dead = False
-        step, score, start_life = 0, 0, 5
+        step, start_life = 0, 0, 5
 
         state = pre_processing(observe)
         # 최초는 동일한 4 프레임을 쌓음
@@ -446,7 +444,6 @@ def play():
             else:
                 history = next_history
 
-            score += reward
 
 if __name__ == '__main__':
     if TRAIN:
