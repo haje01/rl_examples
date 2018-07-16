@@ -290,7 +290,7 @@ def train():
         history = np.reshape([history], (1, 4, 84, 84))
 
         done = False
-        save_history = np.reshape([history], (4, 84, 84))
+        # save_history = np.reshape([history], (4, 84, 84))
         while not done:
             if RENDER:
                 env.render()
@@ -314,11 +314,11 @@ def train():
             # 픽셀 단위로 최신 + 최근 3개 이력을 설정.
             next_history = np.append(next_state, history[:, :3, :, :], axis=1)
 
-            save_state = np.reshape([next_state], (1, 84, 84))
-            save_history = np.append(save_state, save_history[:3, :, :],
-                                     axis=0)
-            from scipy import misc
-            misc.imsave('save.png', save_history.reshape(4 * 84, 84))
+            # save_state = np.reshape([next_state], (1, 84, 84))
+            # save_history = np.append(save_state, save_history[:3, :, :],
+            #                          axis=0)
+            # from scipy import misc
+            # misc.imsave('save.png', save_history.reshape(4 * 84, 84))
 
             # Q값을 예측
             r = agent.net(np.float32(history / 255.))[0]
