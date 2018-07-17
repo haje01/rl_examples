@@ -111,6 +111,12 @@ class BufferWrapper(gym.ObservationWrapper):
         return self.buffer
 
 
+class ClippedRewardsWrapper(gym.RewardWrapper):
+    def reward(self, reward):
+        """Change all the positive rewards to 1, negative to -1 and keep zero."""
+        return np.sign(reward)
+
+
 def make_env(env_name):
     env = gym.make(env_name)
     env = MaxAndSkipEnv(env)
@@ -118,4 +124,5 @@ def make_env(env_name):
     env = ProcessFrame84(env)
     env = ImageToPyTorch(env)
     env = BufferWrapper(env, 4)
+    env = ClippedRewardsWrapper(env)
     return ScaledFloatFrame(env)
