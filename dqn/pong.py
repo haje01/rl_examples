@@ -1,5 +1,5 @@
 # -*- coding: utf8 -*-
-"""Breakout을 DQN으로."""
+"""Pong을 DQN으로."""
 import sys
 import random
 import time
@@ -7,7 +7,6 @@ from collections import deque
 
 import psutil
 import numpy as np
-import gym
 import torch
 from torch import nn
 from torch.autograd import Variable
@@ -18,9 +17,10 @@ from torch.nn.init import xavier_uniform_
 from tensorboardX import SummaryWriter
 from PIL import Image
 
+from wrappers import make_env
 
 TRAIN = True
-LOAD_MODEL = "breakout_700.pth"
+LOAD_MODEL = "pong_700.pth"
 RENDER = True
 RENDER_SX = 160
 RENDER_SY = 210
@@ -98,6 +98,14 @@ class DQN(nn.Module):
         x = F.relu(self.fc1(x))
         x = self.fc2(x)  # 최종 출력은 Q값이기에 soft-max 쓰지 않음.
         return x
+
+
+def save_batch_images(histories):
+    """배치 히스토리 이미지 저장."""
+    from scipy import misc
+    for i in range(BATCH_SIZE):
+        history = histories[i]
+        misc.imsave('history_{}.png'.format(i), history.reshape(4 * 84, 84))
 
 
 class DQNAgent:
@@ -197,6 +205,10 @@ class DQNAgent:
             actions.append(sample[1])
             rewards.append(sample[2])
             deads.append(sample[4])
+        # if len([r for r in rewards if r > 0.0]) > 0 or\
+        #         len([d for d in deads if d]) > 0:
+        #         print(actions, rewards, deads)
+        #         save_batch_images(histories)
 
         # nump -> torch FloatTensor로 변환
         histories = torch.from_numpy(histories).float()
@@ -240,15 +252,12 @@ def init_env():
     # Deterministic: 프레임을 고정 값(3 or 4)로 스킵
     # v0: 이전 동작을 20% 확률로 반복
     # v4: 이전 동작을 반복하지 않음
-    # env = gym.make('PongDeterministic-v4')
-    env = gym.make('PongNoFrameskip-v4')
-    # env = gym.make('BreakoutDeterministic-v4')
-    # env = gym.make('BreakoutNoFrameskip-v4')
+    env = make_env('PongNoFrameskip-v4')
     env.reset()
     if RENDER:
         env.render()
-        env.env.viewer.window.width = RENDER_SX
-        env.env.viewer.window.height = RENDER_SY
+        env.unwrapped.viewer.window.width = RENDER_SX
+        env.unwrapped.viewer.window.height = RENDER_SY
     return env
 
 
@@ -257,12 +266,11 @@ def pre_processing(observe):
 
     이미지는 byte 형으로 변환하여 반환
     """
-    state = observe[CLIP_TOP:, CLIP_HORZ:-CLIP_HORZ, :]
-    state = state[:-CLIP_BOTTOM, :, :]
+    state = observe[CLIP_TOP:-CLIP_BOTTOM, CLIP_HORZ:-CLIP_HORZ, :]
     state = resize(state)
-    state = np.uint8(state * 255)
+    state = np.uint8(state * 255).squeeze(0)
     # from scipy import misc
-    # misc.imsave('clipped.png', state.squeeze(0))
+    # misc.imsave('clipped.png', state)
     return state
 
 
@@ -283,14 +291,15 @@ def train():
         for i in range(NO_OP_STEPS):
             observe, _, _, _ = env.step(1)
 
-        state = pre_processing(observe)
+        # state = pre_processing(observe)
+        history = np.array([observe], copy=False)
         # 최초는 동일한 4 프레임을 쌓음
-        history = np.stack((state, state, state, state), axis=0)
+        # history = np.stack((state, state, state, state), axis=0)
         # batch, frames, width, height
-        history = np.reshape([history], (1, 4, 84, 84))
+        # history = np.reshape([history], (1, 4, 84, 84))
 
         done = False
-        save_history = np.reshape([history], (4, 84, 84))
+        # save_history = np.reshape([history], (4, 84, 84))
         while not done:
             if RENDER:
                 env.render()
@@ -308,20 +317,21 @@ def train():
 
             raction = agent.get_real_action(action)
             observe, reward, done, info = env.step(raction)
-            next_state = pre_processing(observe)
+            next_history = np.array([observe], copy=False)
+            # next_state = pre_processing(observe)
             # 배치가 포함된 형태로 변형
-            next_state = np.reshape([next_state], (1, 1, 84, 84))
+            # next_state = np.reshape([next_state], (1, 1, 84, 84))
             # 픽셀 단위로 최신 + 최근 3개 이력을 설정.
-            next_history = np.append(next_state, history[:, :3, :, :], axis=1)
+            # next_history = np.append(next_state, history[:, :3, :, :], axis=1)
 
-            save_state = np.reshape([next_state], (1, 84, 84))
-            save_history = np.append(save_state, save_history[:3, :, :],
-                                     axis=0)
-            from scipy import misc
-            misc.imsave('save.png', save_history.reshape(4 * 84, 84))
+            # save_state = np.reshape([next_state], (1, 84, 84))
+            # save_history = np.append(save_state, save_history[:3, :, :],
+            #                          axis=0)
+            # from scipy import misc
+            # misc.imsave('save.png', save_history.reshape(4 * 84, 84))
 
             # Q값을 예측
-            r = agent.net(np.float32(history / 255.))[0]
+            r = agent.net(history)[0]
             agent.avg_q_max += float(r[0].max())
             agent.avg_reward += reward
 
@@ -373,12 +383,13 @@ def train():
                 writer.add_scalars('data/memory',
                                    {'total': total, 'avail': avail,
                                     'free': free,
-                                    'replay': agent.replay_buf_size}, e)
+                                    'replay': agent.replay_buf_size},
+                                   global_step)
                 size = sum([sys.getsizeof(i) for i in agent.memory[-1]])
                 agent.replay_buf_size = size * len(agent.memory) / GIGA
                 # 모델 저장
                 if e % SAVE_FREQ == 0:
-                    path = "breakout_{}.pth".format(e)
+                    path = "pong_{}.pth".format(e)
                     torch.save(agent.net.state_dict(), path)
                     print("saved: {}".format(path))
                     if agent.avg_reward >= STOP_REWARD:
@@ -403,7 +414,7 @@ def play():
         state = pre_processing(observe)
         # 최초는 동일한 4 프레임을 쌓음
         history = np.stack((state, state, state, state), axis=0)
-        # batch, width, height, frames
+        # batch, frames, width, height
         history = np.reshape([history], (1, 4, 84, 84))
         # save_history = np.reshape([history], (4, 84, 84))
 
