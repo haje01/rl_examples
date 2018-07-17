@@ -26,18 +26,12 @@ RENDER_SX = 160
 RENDER_SY = 210
 ACTION_SIZE = 3
 NUM_EPISODE = 50000
-NO_OP_STEPS = 30
-CLIP_TOP = 35
-CLIP_BOTTOM = 18
-CLIP_HORZ = 3
 TRAIN_IMAGE_SIZE = 84
 UPDATE_TARGET_FREQ = 1000
 BATCH_SIZE = 32
 STATE_SIZE = (4, 84, 84)
 DISCOUNT_FACTOR = 0.99
 OPTIM_LR = 0.0001
-OPTIM_ALPHA = 0.95
-OPTIM_EPS = 0.02
 EGREEDY_END_EPS = 0.02  # 0.1 -> 0.02로 시도
 SAVE_FREQ = 300
 TRAIN_START = 10000
@@ -78,11 +72,8 @@ class DQN(nn.Module):
         """init."""
         super(DQN, self).__init__()
         self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
-        self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.bn2 = nn.BatchNorm2d(64)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-        self.bn3 = nn.BatchNorm2d(64)
         self.fc1 = nn.Linear(64 * 7 * 7, 512)
         self.fc2 = nn.Linear(512, ACTION_SIZE)
 
@@ -90,9 +81,9 @@ class DQN(nn.Module):
         """전방 연쇄."""
         x = variable(torch.FloatTensor(state))
         # PyTorch 입력은 Batch, Channel, Height, Width 를 가정
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
         # 첫 번째 배치 사이즈는 그대로 이용하고, 나머지는 as is로 flatten
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
@@ -125,9 +116,6 @@ class DQNAgent:
         self.eps_decay = (self.eps_start - self.eps_end) / EXPLORE_STEPS
         self.memory = deque(maxlen=MAX_REPLAY)
         self.avg_q_max, self.avg_loss, self.avg_reward = 0, 0, 0
-        # self.optimizer = optim.RMSprop(params=self.net.parameters(),
-        #                                lr=OPTIM_LR, alpha=OPTIM_ALPHA,
-        #                                eps=OPTIM_EPS)
         self.optimizer = optim.Adam(params=self.net.parameters(),
                                     lr=OPTIM_LR)
         self.replay_buf_size = 0
@@ -200,15 +188,11 @@ class DQNAgent:
         # 모든 샘플에 대해
         for i in range(BATCH_SIZE):
             sample = mini_batch[i]
-            histories[i] = np.float32(sample[0] / 255.)
-            next_histories[i] = np.float32(sample[3] / 255.)
+            histories[i] = sample[0]
+            next_histories[i] = sample[3]
             actions.append(sample[1])
             rewards.append(sample[2])
             deads.append(sample[4])
-        # if len([r for r in rewards if r > 0.0]) > 0 or\
-        #         len([d for d in deads if d]) > 0:
-        #         print(actions, rewards, deads)
-        #         save_batch_images(histories)
 
         # nump -> torch FloatTensor로 변환
         histories = torch.from_numpy(histories).float()
@@ -261,19 +245,6 @@ def init_env():
     return env
 
 
-def pre_processing(observe):
-    """관측 이미지 전처리.
-
-    이미지는 byte 형으로 변환하여 반환
-    """
-    state = observe[CLIP_TOP:-CLIP_BOTTOM, CLIP_HORZ:-CLIP_HORZ, :]
-    state = resize(state)
-    state = np.uint8(state * 255).squeeze(0)
-    # from scipy import misc
-    # misc.imsave('clipped.png', state)
-    return state
-
-
 def train():
     """학습."""
     env = init_env()
@@ -287,19 +258,11 @@ def train():
         dead = False
         step, start_life = 0, 5
 
-        # 처음 30 스텝 스킵
-        for i in range(NO_OP_STEPS):
-            observe, _, _, _ = env.step(1)
+        observe, _, _, _ = env.step(0)
 
-        # state = pre_processing(observe)
         history = np.array([observe], copy=False)
-        # 최초는 동일한 4 프레임을 쌓음
-        # history = np.stack((state, state, state, state), axis=0)
-        # batch, frames, width, height
-        # history = np.reshape([history], (1, 4, 84, 84))
 
         done = False
-        # save_history = np.reshape([history], (4, 84, 84))
         while not done:
             if RENDER:
                 env.render()
@@ -318,17 +281,6 @@ def train():
             raction = agent.get_real_action(action)
             observe, reward, done, info = env.step(raction)
             next_history = np.array([observe], copy=False)
-            # next_state = pre_processing(observe)
-            # 배치가 포함된 형태로 변형
-            # next_state = np.reshape([next_state], (1, 1, 84, 84))
-            # 픽셀 단위로 최신 + 최근 3개 이력을 설정.
-            # next_history = np.append(next_state, history[:, :3, :, :], axis=1)
-
-            # save_state = np.reshape([next_state], (1, 84, 84))
-            # save_history = np.append(save_state, save_history[:3, :, :],
-            #                          axis=0)
-            # from scipy import misc
-            # misc.imsave('save.png', save_history.reshape(4 * 84, 84))
 
             # Q값을 예측
             r = agent.net(history)[0]
@@ -339,7 +291,6 @@ def train():
             if start_life > info['ale.lives']:
                 dead = True
                 start_life = info['ale.lives']
-            reward = np.clip(reward, -1., 1.)
 
             agent.append_sample(history, action, reward, next_history, dead)
             if len(agent.memory) >= TRAIN_START:
@@ -411,12 +362,7 @@ def play():
         dead = False
         step, start_life = 0, 0, 5
 
-        state = pre_processing(observe)
-        # 최초는 동일한 4 프레임을 쌓음
-        history = np.stack((state, state, state, state), axis=0)
-        # batch, frames, width, height
-        history = np.reshape([history], (1, 4, 84, 84))
-        # save_history = np.reshape([history], (4, 84, 84))
+        history = np.array([observe], copy=False)
 
         done = False
         while not done:
@@ -426,24 +372,10 @@ def play():
             global_step += 1
             step += 1
 
-            state = pre_processing(observe)
             action = agent.get_action(history)
             raction = agent.get_real_action(action)
             observe, reward, done, info = env.step(raction)
-            next_state = pre_processing(observe)
-            # 저장
-            # save_state = np.reshape([next_state], (1, 84, 84))
-            # save_history = np.append(save_state, save_history[:3, :, :],
-            #                          axis=0)
-            # from scipy import misc
-            # misc.imsave('save.png', save_history.reshape(4*84, 84))
-
-            # 배치가 포함된 형태로 변형
-            next_state = np.reshape([next_state], (1, 1, 84, 84))
-            # 픽셀 단위로 최신 + 최근 3개 이력을 설정.
-            next_history = np.append(next_state, history[:, :3, :, :], axis=1)
-
-            # misc.imsave('clipped.png', state)
+            next_history = np.array([observe], copy=False)
 
             # 죽은 경우 처리
             if start_life > info['ale.lives']:
