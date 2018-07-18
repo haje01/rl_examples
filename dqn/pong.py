@@ -66,9 +66,8 @@ class DQN(nn.Module):
         self.fc1 = nn.Linear(64 * 7 * 7, 512)
         self.fc2 = nn.Linear(512, ACTION_SIZE)
 
-    def forward(self, state):
+    def forward(self, x):
         """전방 연쇄."""
-        x = Variable(torch.FloatTensor(state))
         # PyTorch 입력은 Batch, Channel, Height, Width 를 가정
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
@@ -125,8 +124,9 @@ class DQNAgent:
         else:
             state_a = np.array([state], copy=False)
             state_v = torch.tensor(state_a).to(device)
-            q_val = self.net(state_v)
-            action = int(np.argmax(q_val.data.cpu().numpy()))
+            q_vals_v = self.net(state_v)
+            _, act_v = torch.max(q_vals_v, dim=1)
+            action = int(act_v.item())
             return action
 
     def get_random_action(self):
@@ -161,7 +161,10 @@ class DQNAgent:
         """리플레이 메모리에서 무작위로 추출한 배치로 모델 학습."""
         if self.eps > self.eps_end:
             self.eps -= self.eps_decay
+        self.train_code2()
 
+    def train_code2(self):
+        """Ptan 책 학습 코드."""
         # 배치 데이터 샘플링
         batch = list(zip(*random.sample(self.memory, BATCH_SIZE)))
         states, actions, rewards, next_states, dones = batch
@@ -184,58 +187,61 @@ class DQNAgent:
         loss.backward()
         self.optimizer.step()
 
-        # # 이력 버퍼 초기화
-        # histories = np.zeros((BATCH_SIZE, STATE_SIZE[0], STATE_SIZE[1],
-        #                      STATE_SIZE[2]))
-        # next_histories = np.zeros((BATCH_SIZE, STATE_SIZE[0], STATE_SIZE[1],
-        #                            STATE_SIZE[2]))
-        # targets = np.zeros(BATCH_SIZE)
-        # actions, rewards, deads = [], [], []
+    def train_code1(self):
+        """케라스 강화학습책 학습 코드."""
+        mini_batch = random.sample(self.memory, BATCH_SIZE)
+        # 이력 버퍼 초기화
+        histories = np.zeros((BATCH_SIZE, STATE_SIZE[0], STATE_SIZE[1],
+                             STATE_SIZE[2]))
+        next_histories = np.zeros((BATCH_SIZE, STATE_SIZE[0], STATE_SIZE[1],
+                                   STATE_SIZE[2]))
+        targets = np.zeros(BATCH_SIZE)
+        actions, rewards, deads = [], [], []
 
-        # # 모든 샘플에 대해
-        # for i in range(BATCH_SIZE):
-        #     sample = mini_batch[i]
-        #     histories[i] = sample[0]
-        #     next_histories[i] = sample[3]
-        #     actions.append(sample[1])
-        #     rewards.append(sample[2])
-        #     deads.append(sample[4])
+        # 모든 샘플에 대해
+        for i in range(BATCH_SIZE):
+            sample = mini_batch[i]
+            histories[i] = sample[0]
+            next_histories[i] = sample[3]
+            actions.append(sample[1])
+            rewards.append(sample[2])
+            deads.append(sample[4])
 
-        # # nump -> torch FloatTensor로 변환
-        # histories = torch.from_numpy(histories).float()
-        # next_histories = torch.from_numpy(next_histories).float()
+        # nump -> torch FloatTensor로 변환
+        histories = torch.from_numpy(histories).float()
+        next_histories = torch.from_numpy(next_histories).float()
 
-        # # 모델에서 이번 이력의 동작 가치를 예측
-        # actions = torch.LongTensor(actions).unsqueeze(1)
-        # # 이력으로 동작 가치(Q) 배열 예측 후, 동작을 인덱스로 동작 가치를 얻음
-        # q_values = self.net(histories).gather(1, variable(actions))
+        # 모델에서 이번 이력의 동작 가치를 예측
+        actions = torch.LongTensor(actions).unsqueeze(1)
+        # 이력으로 동작 가치(Q) 배열 예측 후, 동작을 인덱스로 동작 가치를 얻음
+        q_values = self.net(histories).gather(1, actions).squeeze(-1)
 
-        # # 타겟 모델에서 다음 이력에 대한 동작 가치를 예측한 후, 최대값을 타겟 밸류로
-        # # (Q-Learning update)
-        # target_values = self.target_net(next_histories).data.cpu().\
-        #     numpy().max(1)
+        # 타겟 모델에서 다음 이력에 대한 동작 가치를 예측한 후, 최대값을 타겟 밸류로
+        # (Q-Learning update)
+        target_values = self.target_net(next_histories).data.cpu().\
+            numpy().max(1)
 
-        # # 모든 버퍼 요소에 대해
-        # for i in range(BATCH_SIZE):
-        #     # 타겟 가치 갱신
-        #     if deads[i]:
-        #         targets[i] = rewards[i]
-        #     else:
-        #         targets[i] = rewards[i] + GAMMA * target_values[i]
-        # targets = variable(torch.from_numpy(targets)).float()
+        # 모든 버퍼 요소에 대해
+        for i in range(BATCH_SIZE):
+            # 타겟 가치 갱신
+            if deads[i]:
+                targets[i] = rewards[i]
+            else:
+                targets[i] = rewards[i] + GAMMA * target_values[i]
+        targets = Variable(torch.from_numpy(targets)).float()
 
-        # # 모델과 타겟 모델에서 예측한 Q밸류의 차이가 손실
-        # # (Hubber 손실)
-        # loss = F.smooth_l1_loss(q_values, targets.unsqueeze(1))
-        # self.optimizer.zero_grad()
-        # loss.backward()
-        # # Gradient Exploding에는 BN보다 Gradient Clip이 유효
-        # for param in self.net.parameters():
-        #     param.grad.data.clamp_(-1, 1)
-        # self.optimizer.step()
-        # loss = loss.item()  # loss[0]으로 하면 Variable을 리턴!
-        # self.avg_loss += loss
-        # return loss
+        # 모델과 타겟 모델에서 예측한 Q밸류의 차이가 손실
+        # (Hubber 손실)
+        loss = F.smooth_l1_loss(q_values, targets)
+        self.optimizer.zero_grad()
+        loss.backward()
+        # Gradient Exploding에는 BN보다 Gradient Clip이 유효
+        for param in self.net.parameters():
+            param.grad.data.clamp_(-1, 1)
+        self.optimizer.step()
+        loss = loss.item()  # loss[0]으로 하면 Variable을 리턴!
+        self.avg_loss += loss
+        return loss
 
 
 def init_env():
@@ -256,9 +262,9 @@ def train(device):
     """학습."""
     env = init_env()
     agent = DQNAgent(device)
-    global_step = 0
+    global_step = prev_step = 0
     epstart = None
-    elapsed = 0
+    elapsed = speed = 0
 
     for e in range(1, NUM_EPISODE + 1):
         env.reset()
@@ -317,6 +323,8 @@ def train(device):
             if done:
                 if epstart is not None:
                     elapsed = time.time() - epstart
+                    speed = (global_step - prev_step) / elapsed
+                    prev_step = global_step
                 epstart = time.time()
                 if len(agent.memory) >= TRAIN_START:
                     # 학습 패러미터
@@ -337,8 +345,8 @@ def train(device):
                 perc = vmem.percent
                 free = vmem.free / GIGA
                 print("Episode: {} - replay: {}, memory available: {:.1f}GB, "
-                      "percent: {:.1f}%, free: {:.1f}GB".
-                      format(e, len(agent.memory), avail, perc, free))
+                      "percent: {:.1f}%, free: {:.1f}GB, speed: {:.1f} f/s".
+                      format(e, len(agent.memory), avail, perc, free, speed))
                 writer.add_scalars('data/memory',
                                    {'total': total, 'avail': avail,
                                     'free': free,
